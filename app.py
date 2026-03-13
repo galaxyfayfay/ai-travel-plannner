@@ -18,6 +18,7 @@ import random
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
+import os
 
 st.set_page_config(
     page_title="AI Travel Planner Pro",
@@ -130,8 +131,8 @@ hr{border-color:#e8d9c4;}
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CONSTANTS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-AMAP_KEY    = "9dd88962cfca5696195605aa5ba28007"
-DEEPSEEK_KEY = "sk-d86e1ec157be4b838f9bfde1c3592e60"
+AMAP_KEY    = os.getenv("APIKEY")
+DEEPSEEK_KEY = os.getenv("DEEPSEEKKEY")
 
 # ── Budget: USD base ─────────────────────────────────────────────────────────
 # Thresholds in USD/day → (emoji, label, bar_color, badge_bg)
@@ -2170,4 +2171,5 @@ else:
                 f'<div class="gcard-desc">{desc}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
+
             )
