@@ -2099,38 +2099,4 @@ else:
                 f'</div>',
                 unsafe_allow_html=True,
             )
-Key Fixes Summary
 
-elif "_itin" in st.session_state and "_df" in st.session_state:
-    _run_display(
-        st.session_state["_itin"],
-        st.session_state["_df"],
-        st.session_state.get("_city", city_input),
-        st.session_state.get("_ndays", ndays),
-        st.session_state.get("_budgets", day_budgets),
-        st.session_state.get("_country", country),
-        st.session_state.get("_types", list(sel_types)),
-        st.session_state.get("_lat", city_lat or 35.0),
-        st.session_state.get("_lon", city_lon or 139.0),
-        st.session_state.get("_hotel"),
-        st.session_state.get("_depart"),
-        st.session_state.get("_arrive"),
-    )
-
-else:
-    st.markdown("---")
-    for col, (icon, title, desc) in zip(st.columns(4), [
-        (_t("welcome_1_icon"), _t("welcome_1_title"), _t("welcome_1_desc")),
-        (_t("welcome_2_icon"), _t("welcome_2_title"), _t("welcome_2_desc")),
-        (_t("welcome_3_icon"), _t("welcome_3_title"), _t("welcome_3_desc")),
-        (_t("welcome_4_icon"), _t("welcome_4_title"), _t("welcome_4_desc")),
-    ]):
-        with col:
-            st.markdown(
-                f'<div class="info-card">'
-                f'<div class="ic-icon">{icon}</div>'
-                f'<div class="ic-title">{title}</div>'
-                f'<div class="ic-desc">{desc}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
