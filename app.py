@@ -2100,7 +2100,7 @@ else:
                 unsafe_allow_html=True,
             )
 Key Fixes Summary
-1. Streamlit Secrets — Added _get_secret() that reads from st.secre
+
 elif "_itin" in st.session_state and "_df" in st.session_state:
     _run_display(
         st.session_state["_itin"],
@@ -2110,8 +2110,8 @@ elif "_itin" in st.session_state and "_df" in st.session_state:
         st.session_state.get("_budgets", day_budgets),
         st.session_state.get("_country", country),
         st.session_state.get("_types", list(sel_types)),
-        st.session_state.get("_lat", city_lat or 35.),
-        st.session_state.get("_lon", city_lon or 139.),
+        st.session_state.get("_lat", city_lat or 35.0),
+        st.session_state.get("_lon", city_lon or 139.0),
         st.session_state.get("_hotel"),
         st.session_state.get("_depart"),
         st.session_state.get("_arrive"),
