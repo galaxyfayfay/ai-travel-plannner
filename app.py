@@ -598,35 +598,79 @@ def search_cn(lat,lon,tls,lpt,adcode="",dname=""):
         if k not in seen: seen.add(k); out.append(p)
     return out,errs
 
-def _osm_single(lat,lon,ok,ov,tl,limit,district=""):
-    clat,clon=lat,lon
+def _osm_single(lat, lon, ok, ov, tl, limit, district=""):
+    clat, clon = lat, lon
     if district:
         try:
-            g=requests.get("https://nominatim.openstreetmap.org/search",
-                params={"q":district,"format":"json","limit":1},
-                headers={"User-Agent":"TravelPlannerPro/10"},timeout=5).json()
-            if g: clat,clon=float(g[0]["lat"]),float(g[0]["lon"])
-        except Exception: pass
-    q=(f'[out:json][timeout:30];(node["{ok}"="{ov}"](around:5000,{clat},{clon});'
-       f'way["{ok}"="{ov}"](around:5000,{clat},{clon}););out center {limit*4};')
-    els=[]
-    for url in ["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"]:
-        try: r=requests.post(url,data={"data":q},timeout=28); els=r.json().get("elements",[]); break if els else None
-        except Exception: continue
-    places=[]
+            g = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": district, "format": "json", "limit": 1},
+                headers={"User-Agent": "TravelPlannerPro/10"},
+                timeout=5,
+            ).json()
+            if g:
+                clat, clon = float(g[0]["lat"]), float(g[0]["lon"])
+        except Exception:
+            pass
+
+    q = (
+        f'[out:json][timeout:30];'
+        f'(node["{ok}"="{ov}"](around:5000,{clat},{clon});'
+        f'way["{ok}"="{ov}"](around:5000,{clat},{clon}););out center {limit * 4};'
+    )
+
+    els = []
+    for url in [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+    ]:
+        try:
+            r = requests.post(url, data={"data": q}, timeout=28)
+            els = r.json().get("elements", [])
+            if els:
+                break
+        except Exception:
+            continue
+
+    places = []
     for el in els:
-        tags=el.get("tags",{})
-        nm=tags.get("name:en") or tags.get("name") or ""
-        if not nm or is_chain(nm): continue
-        elat=(el.get("lat",0) if el["type"]=="node" else el.get("center",{}).get("lat",0))
-        elon=(el.get("lon",0) if el["type"]=="node" else el.get("center",{}).get("lon",0))
-        if not elat or not elon: continue
-        pts=[tags.get(k,"") for k in ["addr:housenumber","addr:street","addr:suburb","addr:city"] if tags.get(k)]
-        places.append({"name":nm,"lat":elat,"lon":elon,"rating":round(random.uniform(3.8,5.),1),
-                       "address":", ".join(pts),"phone":tags.get("phone",""),
-                       "website":tags.get("website",""),"type":ov,"type_label":tl,
-                       "district":tags.get("addr:suburb",""),"description":tdesc(ov)})
-        if len(places)>=limit: break
+        tags = el.get("tags", {})
+        nm = tags.get("name:en") or tags.get("name") or ""
+        if not nm or is_chain(nm):
+            continue
+        elat = (
+            el.get("lat", 0)
+            if el["type"] == "node"
+            else el.get("center", {}).get("lat", 0)
+        )
+        elon = (
+            el.get("lon", 0)
+            if el["type"] == "node"
+            else el.get("center", {}).get("lon", 0)
+        )
+        if not elat or not elon:
+            continue
+        pts = [
+            tags.get(k, "")
+            for k in ["addr:housenumber", "addr:street", "addr:suburb", "addr:city"]
+            if tags.get(k)
+        ]
+        places.append({
+            "name": nm,
+            "lat": elat,
+            "lon": elon,
+            "rating": round(random.uniform(3.8, 5.0), 1),
+            "address": ", ".join(pts),
+            "phone": tags.get("phone", ""),
+            "website": tags.get("website", ""),
+            "type": ov,
+            "type_label": tl,
+            "district": tags.get("addr:suburb", ""),
+            "description": tdesc(ov),
+        })
+        if len(places) >= limit:
+            break
+
     return places
 
 def search_intl(lat,lon,tls,lpt,district=""):
