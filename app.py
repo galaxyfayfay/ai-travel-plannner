@@ -2101,8 +2101,23 @@ else:
             )
 Key Fixes Summary
 1. Streamlit Secrets — Added _get_secret() that reads from st.secre
+elif "_itin" in st.session_state and "_df" in st.session_state:
+    _run_display(
+        st.session_state["_itin"],
+        st.session_state["_df"],
+        st.session_state.get("_city", city_input),
+        st.session_state.get("_ndays", ndays),
+        st.session_state.get("_budgets", day_budgets),
+        st.session_state.get("_country", country),
+        st.session_state.get("_types", list(sel_types)),
+        st.session_state.get("_lat", city_lat or 35.),
+        st.session_state.get("_lon", city_lon or 139.),
+        st.session_state.get("_hotel"),
+        st.session_state.get("_depart"),
+        st.session_state.get("_arrive"),
+    )
+
 else:
-    # Welcome state
     st.markdown("---")
     for col, (icon, title, desc) in zip(st.columns(4), [
         (_t("welcome_1_icon"), _t("welcome_1_title"), _t("welcome_1_desc")),
