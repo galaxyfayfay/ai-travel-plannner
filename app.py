@@ -2101,3 +2101,21 @@ else:
             )
 Key Fixes Summary
 1. Streamlit Secrets — Added _get_secret() that reads from st.secre
+else:
+    # Welcome state
+    st.markdown("---")
+    for col, (icon, title, desc) in zip(st.columns(4), [
+        (_t("welcome_1_icon"), _t("welcome_1_title"), _t("welcome_1_desc")),
+        (_t("welcome_2_icon"), _t("welcome_2_title"), _t("welcome_2_desc")),
+        (_t("welcome_3_icon"), _t("welcome_3_title"), _t("welcome_3_desc")),
+        (_t("welcome_4_icon"), _t("welcome_4_title"), _t("welcome_4_desc")),
+    ]):
+        with col:
+            st.markdown(
+                f'<div class="info-card">'
+                f'<div class="ic-icon">{icon}</div>'
+                f'<div class="ic-title">{title}</div>'
+                f'<div class="ic-desc">{desc}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
