@@ -1,6 +1,6 @@
 """
-app.py v11 — AI Travel Planner Pro
-Fixes: secrets reading, NULL display, swap UI, i18n
+app.py v12 — AI Travel Planner Pro
+Fixes: wishlist_panel crash, LANG scope, auth sidebar nesting, itinerary.values() TypeError
 """
 
 import streamlit as st
@@ -20,10 +20,9 @@ st.set_page_config(
 )
 
 # ══════════════════════════════════════════════════════════════════
-# API KEYS — read from Streamlit secrets OR environment variables
+# API KEYS
 # ══════════════════════════════════════════════════════════════════
 def _get_secret(key: str) -> str:
-    """Read from st.secrets first, then os.getenv."""
     try:
         val = st.secrets.get(key, "")
         if val:
@@ -32,7 +31,7 @@ def _get_secret(key: str) -> str:
         pass
     return os.getenv(key, "")
 
-AMAP_KEY = _get_secret("APIKEY")
+AMAP_KEY     = _get_secret("APIKEY")
 DEEPSEEK_KEY = _get_secret("DEEPSEEKKEY")
 
 # ══════════════════════════════════════════════════════════════════
@@ -111,10 +110,10 @@ except Exception:
         "rec_heading": "💡 More Places",
         "rec_caption": "Worth exploring.",
         "rec_refresh": "🔄",
-        "welcome_1_icon": "🎯", "welcome_1_title": "You decide", "welcome_1_desc": "Mix any types",
-        "welcome_2_icon": "💰", "welcome_2_title": "Budget aware", "welcome_2_desc": "Local currency costs",
-        "welcome_3_icon": "📍", "welcome_3_title": "By neighbourhood", "welcome_3_desc": "Clusters nearby places",
-        "welcome_4_icon": "🗺️", "welcome_4_title": "No detours", "welcome_4_desc": "All stops within 8 km",
+        "welcome_1_icon": "🎯", "welcome_1_title": "You decide",     "welcome_1_desc": "Mix any types",
+        "welcome_2_icon": "💰", "welcome_2_title": "Budget aware",   "welcome_2_desc": "Local currency costs",
+        "welcome_3_icon": "📍", "welcome_3_title": "By neighbourhood","welcome_3_desc": "Clusters nearby places",
+        "welcome_4_icon": "🗺️", "welcome_4_title": "No detours",     "welcome_4_desc": "All stops within 8 km",
         "wishlist_heading": "💫 Wishlist",
         "wishlist_empty": "Wishlist empty.",
         "wishlist_add": "❤️ Save",
@@ -266,11 +265,9 @@ section[data-testid="stSidebar"]{background:#faf6ef!important}
   padding-left:6px;border-left:4px solid #c97d35}
 .wl-badge{display:inline-block;background:#ffe4c4;color:#c97d35;
   border-radius:10px;padding:1px 8px;font-size:.75rem;font-weight:600}
-/* Swap panel */
 .swap-card{background:#fff7ed;border:1px solid #e8a558;border-radius:12px;
   padding:14px;margin:8px 0}
 .swap-card h4{margin:0 0 10px;color:#c97d35;font-size:.95rem}
-/* AI rec panel */
 .ai-rec-panel{background:linear-gradient(135deg,#fff7ed,#f0f7ff);
   border-radius:14px;padding:16px;margin:14px 0;
   border:1px solid #e8d5bb}
@@ -374,27 +371,27 @@ CN_CITIES = {
 }
 
 INTL_CITIES = {
-    "tokyo": (35.6762,139.6503,"JP",["Shinjuku","Shibuya","Asakusa","Harajuku","Ginza","Akihabara"]),
-    "osaka": (34.6937,135.5023,"JP",["Dotonbori","Namba","Umeda","Shinsekai","Tenoji"]),
-    "kyoto": (35.0116,135.7681,"JP",["Gion","Arashiyama","Higashiyama","Fushimi","Nishiki"]),
-    "seoul": (37.5665,126.9780,"KR",["Gangnam","Hongdae","Myeongdong","Itaewon","Insadong"]),
-    "bangkok": (13.7563,100.5018,"TH",["Sukhumvit","Silom","Rattanakosin","Chatuchak"]),
-    "singapore": (1.3521,103.8198,"SG",["Marina Bay","Clarke Quay","Orchard","Chinatown","Bugis"]),
-    "paris": (48.8566,2.3522,"FR",["Le Marais","Montmartre","Saint-Germain","Bastille"]),
-    "london": (51.5072,-0.1276,"GB",["Soho","Covent Garden","Shoreditch","South Bank","Camden"]),
-    "rome": (41.9028,12.4964,"IT",["Trastevere","Campo de' Fiori","Prati","Vatican"]),
-    "barcelona": (41.3851,2.1734,"ES",["Gothic Quarter","Eixample","Gracia","El Born"]),
-    "new york": (40.7128,-74.0060,"US",["Manhattan","Brooklyn","SoHo","Greenwich Village","Midtown"]),
-    "new york city": (40.7128,-74.0060,"US",["Manhattan","Brooklyn","SoHo","Midtown"]),
-    "sydney": (-33.8688,151.2093,"AU",["Circular Quay","Surry Hills","Newtown","Bondi"]),
-    "dubai": (25.2048,55.2708,"AE",["Downtown","Dubai Marina","Deira","JBR","DIFC"]),
-    "amsterdam": (52.3676,4.9041,"NL",["Jordaan","De Pijp","Centrum","Oost"]),
-    "istanbul": (41.0082,28.9784,"TR",["Beyoglu","Sultanahmet","Besiktas","Kadikoy"]),
-    "hong kong": (22.3193,114.1694,"HK",["Central","Tsim Sha Tsui","Mong Kok","Causeway Bay"]),
-    "taipei": (25.0330,121.5654,"TW",["Daan","Xinyi","Zhongzheng","Shilin","Ximending"]),
-    "bali": (-8.3405,115.0920,"ID",["Seminyak","Ubud","Canggu","Kuta","Uluwatu"]),
-    "ho chi minh city": (10.7769,106.7009,"VN",["District 1","District 3","Bui Vien"]),
-    "kuala lumpur": (3.1390,101.6869,"MY",["KLCC","Bukit Bintang","Bangsar","Chow Kit"]),
+    "tokyo":          (35.6762, 139.6503,"JP",["Shinjuku","Shibuya","Asakusa","Harajuku","Ginza","Akihabara"]),
+    "osaka":          (34.6937, 135.5023,"JP",["Dotonbori","Namba","Umeda","Shinsekai","Tenoji"]),
+    "kyoto":          (35.0116, 135.7681,"JP",["Gion","Arashiyama","Higashiyama","Fushimi","Nishiki"]),
+    "seoul":          (37.5665, 126.9780,"KR",["Gangnam","Hongdae","Myeongdong","Itaewon","Insadong"]),
+    "bangkok":        (13.7563, 100.5018,"TH",["Sukhumvit","Silom","Rattanakosin","Chatuchak"]),
+    "singapore":      (1.3521,  103.8198,"SG",["Marina Bay","Clarke Quay","Orchard","Chinatown","Bugis"]),
+    "paris":          (48.8566, 2.3522,  "FR",["Le Marais","Montmartre","Saint-Germain","Bastille"]),
+    "london":         (51.5072, -0.1276, "GB",["Soho","Covent Garden","Shoreditch","South Bank","Camden"]),
+    "rome":           (41.9028, 12.4964, "IT",["Trastevere","Campo de' Fiori","Prati","Vatican"]),
+    "barcelona":      (41.3851, 2.1734,  "ES",["Gothic Quarter","Eixample","Gracia","El Born"]),
+    "new york":       (40.7128, -74.0060,"US",["Manhattan","Brooklyn","SoHo","Greenwich Village","Midtown"]),
+    "new york city":  (40.7128, -74.0060,"US",["Manhattan","Brooklyn","SoHo","Midtown"]),
+    "sydney":         (-33.8688,151.2093,"AU",["Circular Quay","Surry Hills","Newtown","Bondi"]),
+    "dubai":          (25.2048, 55.2708, "AE",["Downtown","Dubai Marina","Deira","JBR","DIFC"]),
+    "amsterdam":      (52.3676, 4.9041,  "NL",["Jordaan","De Pijp","Centrum","Oost"]),
+    "istanbul":       (41.0082, 28.9784, "TR",["Beyoglu","Sultanahmet","Besiktas","Kadikoy"]),
+    "hong kong":      (22.3193, 114.1694,"HK",["Central","Tsim Sha Tsui","Mong Kok","Causeway Bay"]),
+    "taipei":         (25.0330, 121.5654,"TW",["Daan","Xinyi","Zhongzheng","Shilin","Ximending"]),
+    "bali":           (-8.3405, 115.0920,"ID",["Seminyak","Ubud","Canggu","Kuta","Uluwatu"]),
+    "ho chi minh city":(10.7769,106.7009,"VN",["District 1","District 3","Bui Vien"]),
+    "kuala lumpur":   (3.1390,  101.6869,"MY",["KLCC","Bukit Bintang","Bangsar","Chow Kit"]),
 }
 
 PTYPES = {
@@ -539,16 +536,10 @@ COUNTRY_CODES = {
 }
 
 # ══════════════════════════════════════════════════════════════════
-# AI RECOMMENDATIONS (DeepSeek or built-in fallback)
+# AI RECOMMENDATIONS
 # ══════════════════════════════════════════════════════════════════
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_recommendations(city: str, country: str, days: int, types: list, lang: str = "EN") -> list:
-    """
-    Get AI-powered place recommendations.
-    Tries DeepSeek API first; falls back to curated data_manager list.
-    Returns list of dicts: {name, type, why, tip, rating}
-    """
-    # Try DeepSeek
     if DEEPSEEK_KEY:
         try:
             type_str = ", ".join(types[:5])
@@ -577,40 +568,35 @@ def get_ai_recommendations(city: str, country: str, days: int, types: list, lang
             )
             if resp.status_code == 200:
                 content = resp.json()["choices"][0]["message"]["content"].strip()
-                # Extract JSON array
-                import re
+                import re, json
                 m = re.search(r'\[.*\]', content, re.DOTALL)
                 if m:
-                    import json
                     items = json.loads(m.group())
                     if isinstance(items, list) and items:
                         return items[:10]
         except Exception:
             pass
 
-    # Fallback: use data_manager curated list
     if DATA_MGR_OK:
-        items = get_must_see(city, limit=8)
-        return [{"name": it["name"], "type": it["type"],
-                 "why": it.get("tip","Worth a visit")[:50],
-                 "tip": it.get("tip",""),
-                 "rating": it.get("rating", 4.5)}
-                for it in items]
+        try:
+            items = get_must_see(city, limit=8)
+            return [{"name": it["name"], "type": it["type"],
+                     "why": it.get("tip","Worth a visit")[:50],
+                     "tip": it.get("tip",""),
+                     "rating": it.get("rating", 4.5)}
+                    for it in items]
+        except Exception:
+            pass
 
-    # Last resort: built-in mini database
     BUILTIN = {
-        "beijing":    [{"name":"故宫","type":"🏛️ Attraction","why":"World's largest palace complex","tip":"Book online, sell out fast","rating":4.9},
-                       {"name":"长城(慕田峪)","type":"🏛️ Attraction","why":"Less crowded than Badaling","tip":"Go early morning","rating":4.9},
-                       {"name":"天坛","type":"🏛️ Attraction","why":"Ming dynasty ceremonial site","tip":"Visit at sunrise for tai chi","rating":4.8}],
-        "shanghai":   [{"name":"外滩","type":"🏛️ Attraction","why":"Iconic waterfront skyline","tip":"Night view is breathtaking","rating":4.9},
-                       {"name":"豫园","type":"🌿 Park","why":"Classical Chinese garden","tip":"Go early morning","rating":4.7},
-                       {"name":"小笼包 南翔","type":"🍜 Restaurant","why":"Best xiao long bao in Shanghai","tip":"Queue early","rating":4.8}],
-        "tokyo":      [{"name":"Senso-ji","type":"🏛️ Attraction","why":"Tokyo's oldest temple","tip":"Dawn visit avoids crowds","rating":4.8},
-                       {"name":"Shibuya Crossing","type":"🏛️ Attraction","why":"World's busiest crossing","tip":"Watch from Starbucks above","rating":4.7},
-                       {"name":"Tsukiji Market","type":"🍜 Restaurant","why":"Freshest sushi breakfast","tip":"Go before 9 AM","rating":4.7}],
-        "paris":      [{"name":"Louvre","type":"🏛️ Attraction","why":"World's largest art museum","tip":"Go Wednesday evening","rating":4.8},
-                       {"name":"Eiffel Tower","type":"🏛️ Attraction","why":"Iconic iron lattice tower","tip":"Book summit tickets ahead","rating":4.7},
-                       {"name":"Musée d'Orsay","type":"🏛️ Attraction","why":"Best Impressionist collection","tip":"Less queue than Louvre","rating":4.9}],
+        "beijing":  [{"name":"故宫","type":"🏛️ Attraction","why":"World's largest palace complex","tip":"Book online","rating":4.9},
+                     {"name":"长城(慕田峪)","type":"🏛️ Attraction","why":"Less crowded Great Wall section","tip":"Go early","rating":4.9}],
+        "shanghai": [{"name":"外滩","type":"🏛️ Attraction","why":"Iconic waterfront skyline","tip":"Night view is best","rating":4.9},
+                     {"name":"豫园","type":"🌿 Park","why":"Classical Chinese garden","tip":"Go early morning","rating":4.7}],
+        "tokyo":    [{"name":"Senso-ji","type":"🏛️ Attraction","why":"Tokyo's oldest temple","tip":"Dawn visit avoids crowds","rating":4.8},
+                     {"name":"Shibuya Crossing","type":"🏛️ Attraction","why":"World's busiest crossing","tip":"Watch from above","rating":4.7}],
+        "paris":    [{"name":"Louvre","type":"🏛️ Attraction","why":"World's largest art museum","tip":"Go Wednesday evening","rating":4.8},
+                     {"name":"Eiffel Tower","type":"🏛️ Attraction","why":"Iconic iron tower","tip":"Book summit tickets ahead","rating":4.7}],
     }
     city_lc = city.strip().lower()
     for k, v in BUILTIN.items():
@@ -621,14 +607,11 @@ def get_ai_recommendations(city: str, country: str, days: int, types: list, lang
 
 def render_ai_recommendations(city: str, country: str, days: int,
                                types: list, lang: str = "EN"):
-    """Render the AI recommendations panel."""
     recs = get_ai_recommendations(city, country, days, types, lang)
     if not recs:
         return
-
-    title = _t("ai_rec_heading") if I18N_OK else "⭐ AI Recommendations"
-    caption = _t("ai_rec_caption") if I18N_OK else "AI-curated must-visit highlights"
-
+    title   = _t("ai_rec_heading")
+    caption = _t("ai_rec_caption")
     st.markdown(
         f'<div class="ai-rec-panel">'
         f'<div style="font-weight:700;font-size:1rem;margin-bottom:4px">{title}</div>'
@@ -637,12 +620,11 @@ def render_ai_recommendations(city: str, country: str, days: int,
         f'  ·  {caption}</div>',
         unsafe_allow_html=True,
     )
-
     cols = st.columns(min(len(recs), 3))
     for i, rec in enumerate(recs):
         with cols[i % min(len(recs), 3)]:
-            nm = str(rec.get("name",""))
-            tp = str(rec.get("type",""))
+            nm  = str(rec.get("name",""))
+            tp  = str(rec.get("type",""))
             why = str(rec.get("why",""))
             tip = str(rec.get("tip",""))
             rat = rec.get("rating", 4.5)
@@ -656,7 +638,6 @@ def render_ai_recommendations(city: str, country: str, days: int,
                 f'</div>',
                 unsafe_allow_html=True,
             )
-
     st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -718,7 +699,7 @@ def _nominatim(q):
         r = requests.get(
             "https://nominatim.openstreetmap.org/search",
             params={"q": q, "format": "json", "limit": 1},
-            headers={"User-Agent": "TravelPlannerPro/11"},
+            headers={"User-Agent": "TravelPlannerPro/12"},
             timeout=9,
         ).json()
         if r:
@@ -740,7 +721,7 @@ def _get_nominatim_districts(city):
         r = requests.get(
             "https://nominatim.openstreetmap.org/search",
             params={"q": city, "format": "json", "limit": 1},
-            headers={"User-Agent": "TravelPlannerPro/11"},
+            headers={"User-Agent": "TravelPlannerPro/12"},
             timeout=8,
         ).json()
         if not r: return []
@@ -901,7 +882,7 @@ def _osm_single(lat, lon, ok, ov, tl, limit, district=""):
             g = requests.get(
                 "https://nominatim.openstreetmap.org/search",
                 params={"q": district, "format": "json", "limit": 1},
-                headers={"User-Agent": "TravelPlannerPro/11"},
+                headers={"User-Agent": "TravelPlannerPro/12"},
                 timeout=5,
             ).json()
             if g:
@@ -920,8 +901,7 @@ def _osm_single(lat, lon, ok, ov, tl, limit, district=""):
             r = requests.post(url, data={"data": q}, timeout=28)
             result = r.json().get("elements", [])
             if result:
-                els = result
-                break
+                els = result; break
         except Exception:
             continue
 
@@ -1042,25 +1022,43 @@ def fetch_all_places(clat, clon, country, is_cn, tls_t, lpt,
     return df.sort_values("rating", ascending=False).reset_index(drop=True), warn
 
 # ══════════════════════════════════════════════════════════════════
-# AUTH
+# AUTH HELPERS
 # ══════════════════════════════════════════════════════════════════
 def _cur_user():
-    if not AUTH_OK: return None
-    tok = st.session_state.get("_auth_token","")
-    return get_user_from_session(tok) if tok else None
+    """Safely get current logged-in user."""
+    if not AUTH_OK:
+        return None
+    try:
+        tok = st.session_state.get("_auth_token", "")
+        if not tok:
+            return None
+        return get_user_from_session(tok)
+    except Exception:
+        return None
 
 def render_auth_sidebar():
-    if not AUTH_OK: return
+    """Render login/register or logged-in user panel."""
+    if not AUTH_OK:
+        return
     user = _cur_user()
     if user:
-        pts = get_points(user["username"]) if POINTS_OK else 0
+        pts = 0
+        if POINTS_OK:
+            try:
+                pts = get_points(user["username"])
+            except Exception:
+                pts = 0
         st.markdown(
             f'<div style="background:#fff7ed;border-radius:10px;padding:10px;margin-bottom:8px">'
             f'👤 <b>{user["username"]}</b>  '
             f'<span class="wl-badge">🎫 {pts} pts</span></div>',
-            unsafe_allow_html=True)
+            unsafe_allow_html=True,
+        )
         if st.button(_t("auth_logout"), key="auth_lo"):
-            logout_user(st.session_state.get("_auth_token",""))
+            try:
+                logout_user(st.session_state.get("_auth_token", ""))
+            except Exception:
+                pass
             st.session_state.pop("_auth_token", None)
             st.rerun()
     else:
@@ -1069,20 +1067,31 @@ def render_auth_sidebar():
             u = st.text_input(_t("auth_username"), key="li_u")
             p = st.text_input(_t("auth_password"), type="password", key="li_p")
             if st.button(_t("auth_login"), key="li_b", use_container_width=True):
-                ok, msg, tok = login_user(u, p)
-                if ok:
-                    st.session_state["_auth_token"] = tok
-                    if POINTS_OK: add_points(u, "daily_login")
-                    st.success(msg); st.rerun()
-                else:
-                    st.error(msg)
+                try:
+                    ok, msg, tok = login_user(u, p)
+                    if ok:
+                        st.session_state["_auth_token"] = tok
+                        if POINTS_OK:
+                            try:
+                                add_points(u, "daily_login")
+                            except Exception:
+                                pass
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                except Exception as e:
+                    st.error(f"Login error: {e}")
         with t2:
-            ru = st.text_input(_t("auth_username"), key="re_u")
-            re_e = st.text_input(_t("auth_email"), key="re_e")
-            rp = st.text_input(_t("auth_password"), type="password", key="re_p")
+            ru  = st.text_input(_t("auth_username"), key="re_u")
+            re_e = st.text_input(_t("auth_email"),   key="re_e")
+            rp  = st.text_input(_t("auth_password"), type="password", key="re_p")
             if st.button(_t("auth_register"), key="re_b", use_container_width=True):
-                ok, msg = register_user(ru, rp, re_e)
-                (st.success if ok else st.error)(msg)
+                try:
+                    ok, msg = register_user(ru, rp, re_e)
+                    (st.success if ok else st.error)(msg)
+                except Exception as e:
+                    st.error(f"Register error: {e}")
 
 # ══════════════════════════════════════════════════════════════════
 # MAP
@@ -1092,12 +1101,13 @@ def build_map(df, lat, lon, itinerary, hotel_c=None, depart_c=None, arrive_c=Non
     vi = {}
     if itinerary:
         for di, (dl, stops) in enumerate(itinerary.items()):
+            if not isinstance(stops, list): continue
             for si, s in enumerate(stops):
                 vi[s["name"]] = (di, si+1, s)
 
     if itinerary:
         for di, (dl, stops) in enumerate(itinerary.items()):
-            if len(stops) < 2: continue
+            if not isinstance(stops, list) or len(stops) < 2: continue
             dc = DAY_COLORS[di % len(DAY_COLORS)]
             for si in range(len(stops)-1):
                 a, b = stops[si], stops[si+1]
@@ -1126,18 +1136,18 @@ def build_map(df, lat, lon, itinerary, hotel_c=None, depart_c=None, arrive_c=Non
         v = vi.get(row["name"])
         if v:
             di, sn, _ = v
-            color = DAY_COLORS[di % len(DAY_COLORS)]
-            label = str(sn)
+            color    = DAY_COLORS[di % len(DAY_COLORS)]
+            label    = str(sn)
             day_info = f"Day {di+1} · Stop {sn}"
         else:
-            color = "#b0a090"; label = "·"; day_info = "Not scheduled"
+            color    = "#b0a090"; label = "·"; day_info = "Not scheduled"
         addr = str(row.get("address",""))
-        ph = str(row.get("phone",""))
-        pop = (f"<div style='min-width:180px'>"
-               f"<div style='font-weight:700'>{row['name']}</div>"
-               f"<div style='color:#888;font-size:.78rem'>⭐ {row['rating']:.1f} · {day_info}</div>"
-               f"{'<div style=font-size:.74rem>📍'+addr[:55]+'</div>' if addr and 'demo' not in addr.lower() else ''}"
-               f"{'<div style=font-size:.74rem>📞'+ph+'</div>' if ph else ''}</div>")
+        ph   = str(row.get("phone",""))
+        pop  = (f"<div style='min-width:180px'>"
+                f"<div style='font-weight:700'>{row['name']}</div>"
+                f"<div style='color:#888;font-size:.78rem'>⭐ {row['rating']:.1f} · {day_info}</div>"
+                f"{'<div style=font-size:.74rem>📍'+addr[:55]+'</div>' if addr and 'demo' not in addr.lower() else ''}"
+                f"{'<div style=font-size:.74rem>📞'+ph+'</div>' if ph else ''}</div>")
         folium.Marker(
             [row["lat"], row["lon"]],
             popup=folium.Popup(pop, max_width=250),
@@ -1166,24 +1176,21 @@ def build_map(df, lat, lon, itinerary, hotel_c=None, depart_c=None, arrive_c=Non
     return m
 
 # ══════════════════════════════════════════════════════════════════
-# INLINE SWAP — renders swap UI directly in the itinerary table row
+# INLINE SWAP
 # ══════════════════════════════════════════════════════════════════
 def render_inline_swap(itinerary: dict, df: pd.DataFrame, day_key: str, stop_idx: int):
-    """
-    Show alternatives for one specific stop and let user confirm swap.
-    Called when user clicks the swap button for a row.
-    """
     if not WISHLIST_OK:
-        st.info("swap_place_in_itinerary not available.")
+        st.info("Swap not available.")
         return
 
     stops = itinerary.get(day_key, [])
-    if stop_idx >= len(stops):
+    if not isinstance(stops, list) or stop_idx >= len(stops):
         return
 
-    cur = stops[stop_idx]
+    cur      = stops[stop_idx]
     cur_type = cur.get("type_label", "")
-    used = {s["name"] for sl in itinerary.values() for s in sl}
+    used     = {s["name"] for sl in itinerary.values()
+                if isinstance(sl, list) for s in sl}
 
     cands = (df[(df["type_label"] == cur_type) & (~df["name"].isin(used))]
              .sort_values("rating", ascending=False)
@@ -1201,35 +1208,41 @@ def render_inline_swap(itinerary: dict, df: pd.DataFrame, day_key: str, stop_idx
         cols = st.columns(min(len(cands), 3))
         for i, (_, alt_row) in enumerate(cands.iterrows()):
             with cols[i % min(len(cands), 3)]:
-                nm = alt_row["name"]
-                rat = alt_row.get("rating", 0)
+                nm   = alt_row["name"]
+                rat  = alt_row.get("rating", 0)
                 dist = alt_row.get("district", "")
                 addr = str(alt_row.get("address",""))[:40]
-                key = f"swap_confirm_{day_key}_{stop_idx}_{nm[:10]}"
+                key  = f"swap_confirm_{day_key}_{stop_idx}_{nm[:10]}"
                 st.markdown(
                     f"**{nm}**  <br />"
                     f"⭐ {rat:.1f} · {dist}  <br />"
                     f"{'📍 '+addr if addr and 'demo' not in addr.lower() else ''}",
                 )
                 if st.button(f"✅ Use this", key=key, use_container_width=True):
-                    new_it = swap_place_in_itinerary(
-                        st.session_state.get("_itin", itinerary),
-                        day_key, stop_idx, alt_row.to_dict(),
-                    )
-                    st.session_state["_itin"] = new_it
-                    # Clear the swap panel state
+                    try:
+                        new_it = swap_place_in_itinerary(
+                            st.session_state.get("_itin", itinerary),
+                            day_key, stop_idx, alt_row.to_dict(),
+                        )
+                        st.session_state["_itin"] = new_it
+                    except Exception:
+                        # Manual swap fallback
+                        new_it = dict(st.session_state.get("_itin", itinerary))
+                        day_stops = list(new_it.get(day_key, []))
+                        day_stops[stop_idx] = alt_row.to_dict()
+                        new_it[day_key] = day_stops
+                        st.session_state["_itin"] = new_it
                     swap_state_key = f"_swap_open_{day_key}_{stop_idx}"
                     st.session_state.pop(swap_state_key, None)
                     st.success(f"✅ Replaced with **{nm}**!")
                     st.rerun()
 
         if st.button("✖ Cancel", key=f"swap_cancel_{day_key}_{stop_idx}"):
-            swap_state_key = f"_swap_open_{day_key}_{stop_idx}"
-            st.session_state.pop(swap_state_key, None)
+            st.session_state.pop(f"_swap_open_{day_key}_{stop_idx}", None)
             st.rerun()
 
 # ══════════════════════════════════════════════════════════════════
-# TABLE with per-row swap buttons
+# TABLE
 # ══════════════════════════════════════════════════════════════════
 def render_table(df, itinerary, day_budgets, country, city=""):
     if isinstance(day_budgets, int):
@@ -1238,34 +1251,33 @@ def render_table(df, itinerary, day_budgets, country, city=""):
     stop_map = {}
     if itinerary:
         for di, (dl, stops) in enumerate(itinerary.items()):
+            if not isinstance(stops, list): continue
             for si, s in enumerate(stops):
-                stop_map[s["name"]] = (di, si, dl, s)  # note: si is 0-based index
+                stop_map[s["name"]] = (di, si, dl, s)
 
     n2r = {row["name"]: row for _, row in df.iterrows()}
     scheduled = []
     if itinerary:
         for di, (dl, stops) in enumerate(itinerary.items()):
+            if not isinstance(stops, list): continue
             for si, s in enumerate(stops):
                 if s["name"] in n2r:
                     scheduled.append((di, si, dl, s["name"]))
 
-    snames = {x[3] for x in scheduled}
+    snames     = {x[3] for x in scheduled}
     unscheduled = [row for _, row in df.iterrows() if row["name"] not in snames]
 
-    # Render day by day with inline swap
-    seq = 0
-    cur_day = -1
+    seq = 0; cur_day = -1
     current_itin = st.session_state.get("_itin", itinerary)
 
     for di, si, dl, nm in scheduled:
         seq += 1
-        row = n2r[nm]
+        row   = n2r[nm]
         color = DAY_COLORS[di % len(DAY_COLORS)]
         d_usd = day_budgets[di] if di < len(day_budgets) else day_budgets[-1]
 
-        # Day header
         if di != cur_day:
-            cur_day = di
+            cur_day   = di
             day_stops = list((current_itin or {}).get(f"Day {di+1}", []))
             em, lb, _, __ = budget_level(d_usd)
             st.markdown(
@@ -1277,13 +1289,11 @@ def render_table(df, itinerary, day_budgets, country, city=""):
                 unsafe_allow_html=True,
             )
 
-        # Row container
         stop_data = stop_map.get(nm)
-        sd = stop_data[3] if stop_data else {}
-        swap_key = f"_swap_open_Day {di+1}_{si}"
+        sd        = stop_data[3] if stop_data else {}
+        swap_key  = f"_swap_open_Day {di+1}_{si}"
 
         with st.container():
-            # Main row
             c_num, c_info, c_transport, c_swap = st.columns([1, 5, 3, 1])
 
             with c_num:
@@ -1298,11 +1308,11 @@ def render_table(df, itinerary, day_budgets, country, city=""):
                 )
 
             with c_info:
-                tl = row.get("type_label","") or row.get("type","")
-                rat = row.get("rating", 0)
+                tl   = row.get("type_label","") or row.get("type","")
+                rat  = row.get("rating", 0)
                 desc = row.get("description","")
                 addr = str(row.get("address",""))
-                ph = str(row.get("phone",""))
+                ph   = str(row.get("phone",""))
                 _, cost_str = cost_estimate(tl, d_usd, country) if tl else (0,"")
 
                 info_html = (
@@ -1356,13 +1366,12 @@ def render_table(df, itinerary, day_budgets, country, city=""):
             with c_swap:
                 swap_open = st.session_state.get(swap_key, False)
                 btn_label = "✖" if swap_open else "🔄"
-                btn_help = "Cancel swap" if swap_open else "Swap this stop"
                 if st.button(btn_label, key=f"swapbtn_{di}_{si}",
-                             help=btn_help, use_container_width=True):
+                             help="Cancel swap" if swap_open else "Swap this stop",
+                             use_container_width=True):
                     st.session_state[swap_key] = not swap_open
                     st.rerun()
 
-        # Swap panel (shown below the row when open)
         if st.session_state.get(swap_key, False):
             render_inline_swap(current_itin, df, f"Day {di+1}", si)
 
@@ -1373,12 +1382,15 @@ def render_table(df, itinerary, day_budgets, country, city=""):
     if MEAL_OK and itinerary:
         avg_usd = round(sum(day_budgets)/len(day_budgets)) if day_budgets else 60
         for di, (dl, stops) in enumerate(itinerary.items()):
-            if not stops: continue
+            if not isinstance(stops, list) or not stops: continue
             d_usd = day_budgets[di] if di < len(day_budgets) else avg_usd
-            st.markdown(render_meal_panel(city, di, d_usd, country, LANG, di*7+42),
-                        unsafe_allow_html=True)
+            try:
+                st.markdown(render_meal_panel(city, di, d_usd, country, LANG, di*7+42),
+                            unsafe_allow_html=True)
+            except Exception:
+                pass
 
-    # Must-see / AI recommendations
+    # AI recommendations
     render_ai_recommendations(city, country,
                                len(itinerary) if itinerary else 3,
                                list(PTYPES.keys()), LANG)
@@ -1439,16 +1451,16 @@ def _render_extra(unscheduled, day_budgets, country):
 
         cards = ""
         for p in picks:
-            nm = str(p.get("name",""))
-            tl = str(p.get("type_label","") or p.get("type",""))
-            rat = p.get("rating",0)
+            nm   = str(p.get("name",""))
+            tl   = str(p.get("type_label","") or p.get("type",""))
+            rat  = p.get("rating",0)
             dist = str(p.get("district","") or "—")
             addr = str(p.get("address","") or "")[:55]
-            ph = str(p.get("phone","") or "")
+            ph   = str(p.get("phone","") or "")
             _, cs = cost_estimate(tl, avg, country)
             addr_h = (f'<div style="font-size:.74rem;color:#999">📍 {addr}</div>'
                       if addr and "demo" not in addr.lower() else "")
-            ph_h = f'<div style="font-size:.74rem;color:#999">📞 {ph}</div>' if ph else ""
+            ph_h   = f'<div style="font-size:.74rem;color:#999">📞 {ph}</div>' if ph else ""
             cards += (
                 f'<div class="rec-card">'
                 f'<div class="rc-name">{nm}</div>'
@@ -1471,9 +1483,9 @@ def render_budget_summary(itinerary, day_budgets, country, days):
     sym, rate = _local_rate(country)
     tots = []
     for di, (dl, stops) in enumerate(itinerary.items()):
-        if not stops: continue
+        if not isinstance(stops, list) or not stops: continue
         du = day_budgets[di] if di < len(day_budgets) else day_budgets[-1]
-        t = sum(
+        t  = sum(
             cost_estimate(s.get("type_label",""), du, country)[0]
             + transport_cost_estimate(
                 (s.get("transport_to_next") or {}).get("distance_km",0) or 0, du, country)[0]
@@ -1483,8 +1495,11 @@ def render_budget_summary(itinerary, day_budgets, country, days):
     if not tots: return
 
     st.markdown(f'<div class="sec-head">{_t("budget_heading")}</div>', unsafe_allow_html=True)
-    gt = sum(t for _,t,_ in tots); gb = sum(d for _,_,d in tots)
-    nc = min(len(tots), 4) + 1; cols = st.columns(nc); any_over = False
+    gt  = sum(t for _,t,_ in tots)
+    gb  = sum(d for _,_,d in tots)
+    nc  = min(len(tots), 4) + 1
+    cols = st.columns(nc)
+    any_over = False
 
     for i, (dl, t, du) in enumerate(tots):
         with cols[i % (nc-1)]:
@@ -1492,8 +1507,8 @@ def render_budget_summary(itinerary, day_budgets, country, days):
             if over: any_over = True
             em, lb, _, __ = budget_level(du)
             lo_u = round(t*.8); hi_u = round(t*1.2)
-            rng = (f"${lo_u}–${hi_u}" if country=="US"
-                   else f"${lo_u}–${hi_u} ({sym}{round(lo_u*rate)}–{sym}{round(hi_u*rate)})")
+            rng  = (f"${lo_u}–${hi_u}" if country=="US"
+                    else f"${lo_u}–${hi_u} ({sym}{round(lo_u*rate)}–{sym}{round(hi_u*rate)})")
             st.markdown(
                 f'<div class="bsum-card">'
                 f'<div class="day-lbl">{dl}</div>'
@@ -1525,7 +1540,7 @@ def render_budget_summary(itinerary, day_budgets, country, days):
     with st.expander(_t("budget_breakdown")):
         rows = []
         for di, (dl, stops) in enumerate(itinerary.items()):
-            if not stops: continue
+            if not isinstance(stops, list) or not stops: continue
             du = day_budgets[di] if di < len(day_budgets) else day_budgets[-1]
             for s in stops:
                 tl = s.get("type_label",""); _, cr = cost_estimate(tl, du, country)
@@ -1548,19 +1563,22 @@ def render_transport_details(itinerary, country, city, day_budgets):
     if isinstance(day_budgets, int): day_budgets = [day_budgets]*30
     with st.expander(_t("transport_comparison"), expanded=False):
         for di, (dl, stops) in enumerate(itinerary.items()):
-            if len(stops) < 2: continue
+            if not isinstance(stops, list) or len(stops) < 2: continue
             du = day_budgets[di] if di < len(day_budgets) else 60
             st.markdown(f"**{dl}**")
             for si in range(len(stops)-1):
                 a, b = stops[si], stops[si+1]
-                st.markdown(
-                    render_transport_comparison(
-                        a["lat"], a["lon"], b["lat"], b["lon"],
-                        a["name"], b["name"],
-                        country=country, city=city, daily_usd=du, lang=LANG,
-                    ),
-                    unsafe_allow_html=True,
-                )
+                try:
+                    st.markdown(
+                        render_transport_comparison(
+                            a["lat"], a["lon"], b["lat"], b["lon"],
+                            a["name"], b["name"],
+                            country=country, city=city, daily_usd=du, lang=LANG,
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                except Exception:
+                    pass
 
 # ══════════════════════════════════════════════════════════════════
 # COLLAB
@@ -1576,15 +1594,21 @@ def render_collab_panel():
         uname = user["username"]
         if st.button(_t("collab_share_link"), key="cb_gen"):
             import uuid as _uu
-            tok = create_collab_link(uname, str(_uu.uuid4())[:8])
-            st.session_state["_collab_tok"] = tok
+            try:
+                tok = create_collab_link(uname, str(_uu.uuid4())[:8])
+                st.session_state["_collab_tok"] = tok
+            except Exception as e:
+                st.error(str(e))
         if "_collab_tok" in st.session_state:
             st.success(f"Share Code: **{st.session_state['_collab_tok']}**")
         st.markdown("---")
         jc = st.text_input("Join code", key="cb_jc", placeholder="ABC123XY")
         if st.button("🤝 Join", key="cb_jb"):
-            ok, msg = join_collab(uname, jc)
-            (st.success if ok else st.error)(msg)
+            try:
+                ok, msg = join_collab(uname, jc)
+                (st.success if ok else st.error)(msg)
+            except Exception as e:
+                st.error(str(e))
 
 # ══════════════════════════════════════════════════════════════════
 # EXPORT
@@ -1592,13 +1616,13 @@ def render_collab_panel():
 def build_pdf(itinerary, city, day_budgets, country):
     if isinstance(day_budgets, int): day_budgets = [day_budgets]*30
     avg = round(sum(day_budgets)/len(day_budgets)) if day_budgets else 60
-    DC = ["#c97d35","#3a8fd4","#3aaa7a","#9b59b6","#e05c3a","#1abc9c","#e91e63","#f39c12"]
+    DC  = ["#c97d35","#3a8fd4","#3aaa7a","#9b59b6","#e05c3a","#1abc9c","#e91e63","#f39c12"]
     def cl(s): return str(s or "").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
     _, lb, _, __ = budget_level(avg)
-    total_stops = sum(len(v) for v in itinerary.values() if v)
+    total_stops  = sum(len(v) for v in itinerary.values() if isinstance(v, list))
     mjs = []; pjs = []; mlats = []; mlons = []
     for di, (dl, stops) in enumerate(itinerary.items()):
-        if not stops: continue
+        if not isinstance(stops, list) or not stops: continue
         c = DC[di % len(DC)]; pc = []
         for si, s in enumerate(stops):
             lat = s.get("lat",0); lon = s.get("lon",0)
@@ -1612,11 +1636,11 @@ def build_pdf(itinerary, city, day_budgets, country):
     clon = sum(mlons)/len(mlons) if mlons else 139.
     days_h = ""
     for di, (dl, stops) in enumerate(itinerary.items()):
-        if not stops: continue
-        du = day_budgets[di] if di < len(day_budgets) else day_budgets[-1]
-        c = DC[di % len(DC)]; rows = ""
+        if not isinstance(stops, list) or not stops: continue
+        du   = day_budgets[di] if di < len(day_budgets) else day_budgets[-1]
+        c    = DC[di % len(DC)]; rows = ""
         for si, s in enumerate(stops):
-            tr = s.get("transport_to_next") or {}
+            tr    = s.get("transport_to_next") or {}
             route = f"{tr.get('mode','—')} · {tr.get('duration','')}" if tr else "Last stop"
             rows += (f"<tr><td>{si+1}</td><td>{cl(s.get('time_slot','—'))}</td>"
                      f"<td>{cl(s.get('name',''))}</td><td>{cl(s.get('type_label',''))}</td>"
@@ -1669,15 +1693,17 @@ def build_calendar_urls(itinerary, start_date_str, city):
           "3:00 PM":(15,0),"4:30 PM":(16,30),"6:00 PM":(18,0),"7:30 PM":(19,30),"9:00 PM":(21,0)}
     out = []
     for di, (dl, stops) in enumerate(itinerary.items()):
+        if not isinstance(stops, list): continue
         for si, s in enumerate(stops):
-            nm = s.get("name","Stop"); addr = s.get("address","") or city
+            nm   = s.get("name","Stop")
+            addr = s.get("address","") or city
             hh, mm = SM.get(s.get("time_slot","9:00 AM"), (9,0))
             ds = ""
             if bd:
-                dd = bd + timedelta(days=di)
+                dd  = bd + timedelta(days=di)
                 st2 = dd.replace(hour=hh, minute=mm, second=0)
-                et = st2 + timedelta(hours=1, minutes=30)
-                ds = f"{st2.strftime('%Y%m%dT%H%M%S')}/{et.strftime('%Y%m%dT%H%M%S')}"
+                et  = st2 + timedelta(hours=1, minutes=30)
+                ds  = f"{st2.strftime('%Y%m%dT%H%M%S')}/{et.strftime('%Y%m%dT%H%M%S')}"
             p = {"action":"TEMPLATE","text":f"{nm} ({city.title()})","location":addr[:100],
                  "details":f"{city.title()} · {dl} Stop {si+1}"}
             if ds: p["dates"] = ds
@@ -1687,7 +1713,9 @@ def build_calendar_urls(itinerary, start_date_str, city):
     return out
 
 def render_export_panel(itinerary, city, day_budgets, country):
-    if not itinerary or not any(itinerary.values()): return
+    if not itinerary or not any(
+        isinstance(v, list) and v for v in itinerary.values()
+    ): return
     if isinstance(day_budgets, int): day_budgets = [day_budgets]*30
     st.markdown(f'<div class="sec-head">{_t("export_heading")}</div>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
@@ -1706,7 +1734,7 @@ def render_export_panel(itinerary, city, day_budgets, country):
     with c2:
         st.markdown(f"**{_t('export_calendar')}**")
         sd = st.date_input(_t("export_date"), key="exp_date", label_visibility="collapsed")
-        ss = sd.strftime("%Y-%m-%d") if sd else ""
+        ss   = sd.strftime("%Y-%m-%d") if sd else ""
         urls = build_calendar_urls(itinerary, ss, city)
         if urls:
             dseen = {}
@@ -1725,18 +1753,19 @@ def render_export_panel(itinerary, city, day_budgets, country):
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════
 with st.sidebar:
-    # Language selector
+    # ── Language selector ──────────────────────────────────────────
     lang_disp = st.selectbox(
         "🌐 Language / 语言",
         ["EN — English", "ZH — 中文"],
         index=0 if LANG == "EN" else 1,
         key="lang_sel",
     )
+    # Update LANG immediately after widget
     LANG = "ZH" if lang_disp.startswith("ZH") else "EN"
     if I18N_OK:
         def _t(key, **kw): return _ti(key, LANG, **kw)
 
-    # Auth
+    # ── Auth ───────────────────────────────────────────────────────
     if AUTH_OK:
         with st.expander("👤 Account", expanded=False):
             render_auth_sidebar()
@@ -1744,16 +1773,16 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(f"### {_t('where_heading')}")
 
-    all_c = sorted(WORLD_CITIES.keys())
-    prev_c = st.session_state.get("sel_country","")
+    all_c      = sorted(WORLD_CITIES.keys())
+    prev_c     = st.session_state.get("sel_country","")
     sel_country = st.selectbox(
         _t("pick_country"), [""] + all_c,
         index=([""] + all_c).index(prev_c) if prev_c in all_c else 0,
         key="sel_country",
     )
     if sel_country:
-        co = WORLD_CITIES.get(sel_country, [])
-        pc = st.session_state.get("sel_city_name","")
+        co       = WORLD_CITIES.get(sel_country, [])
+        pc       = st.session_state.get("sel_city_name","")
         sel_city = st.selectbox(
             _t("pick_city"), co,
             index=co.index(pc) if pc in co else 0,
@@ -1771,12 +1800,12 @@ with st.sidebar:
     elif sel_country:     city_input = sel_country
     else:                 city_input = "Tokyo"
 
-    city_key  = city_input.strip().lower()
-    is_cn     = city_key in CN_CITIES
-    intl_d    = INTL_CITIES.get(city_key)
-    if is_cn:      city_lat, city_lon = CN_CITIES[city_key]; country = "CN"
-    elif intl_d:   city_lat, city_lon, country = intl_d[0], intl_d[1], intl_d[2]
-    else:          city_lat = city_lon = None; country = COUNTRY_CODES.get(sel_country,"INT")
+    city_key = city_input.strip().lower()
+    is_cn    = city_key in CN_CITIES
+    intl_d   = INTL_CITIES.get(city_key)
+    if is_cn:     city_lat, city_lon = CN_CITIES[city_key]; country = "CN"
+    elif intl_d:  city_lat, city_lon, country = intl_d[0], intl_d[1], intl_d[2]
+    else:         city_lat = city_lon = None; country = COUNTRY_CODES.get(sel_country,"INT")
 
     hotel_addr  = st.text_input(_t("hotel_label"),  "", placeholder=_t("hotel_placeholder"))
     depart_addr = st.text_input(_t("depart_label"), "", placeholder=_t("depart_placeholder"))
@@ -1838,7 +1867,7 @@ with st.sidebar:
         tabs = st.tabs([f"D{d+1}" for d in range(ndays)])
         for di, tab in enumerate(tabs):
             with tab:
-                ds = st.selectbox(
+                ds   = st.selectbox(
                     _t("area_label"), pdo,
                     key=f"da_{di}", label_visibility="collapsed",
                 )
@@ -1873,14 +1902,15 @@ with st.sidebar:
                 if not quota: quota = {sel_types[0]: 1}
                 day_quotas.append(quota)
     else:
-        ds = st.selectbox(_t("all_area_label"), pdo, key="da_all",
-                          label_visibility="collapsed")
+        ds   = st.selectbox(_t("all_area_label"), pdo, key="da_all",
+                            label_visibility="collapsed")
         auto = (ds == "Auto (city-wide)")
-        _adc = "" if auto else adcode_map.get(ds,"")
-        _dn  = "" if auto else ds
-        _alat, _alon = center_map.get(ds, (city_lat, city_lon)) if not auto else (city_lat, city_lon)
-        day_adcodes = [_adc]*ndays; day_district_names = [_dn]*ndays
-        day_anchor_lats = [_alat]*ndays; day_anchor_lons = [_alon]*ndays
+        _adc  = "" if auto else adcode_map.get(ds,"")
+        _dn   = "" if auto else ds
+        _alat, _alon = (center_map.get(ds, (city_lat, city_lon))
+                        if not auto else (city_lat, city_lon))
+        day_adcodes       = [_adc]*ndays; day_district_names = [_dn]*ndays
+        day_anchor_lats   = [_alat]*ndays; day_anchor_lons   = [_alon]*ndays
 
         mr = st.slider(_t("min_rating_label"), 0., 5., 3.5, .5, key="mr_all")
         day_min_ratings = [mr]*ndays
@@ -1902,8 +1932,8 @@ with st.sidebar:
         day_quotas = [dict(quota)]*ndays
 
     total_quota = sum(sum(q.values()) for q in day_quotas) if day_quotas else 4
-    lpt = max(30, total_quota * 6)
-    daily_usd = round(sum(day_budgets)/len(day_budgets)) if day_budgets else 60
+    lpt         = max(30, total_quota * 6)
+    daily_usd   = round(sum(day_budgets)/len(day_budgets)) if day_budgets else 60
 
     st.markdown("---")
     if "seed" not in st.session_state: st.session_state.seed = 42
@@ -1913,17 +1943,25 @@ with st.sidebar:
         st.session_state.seed = random.randint(1, 99999)
         st.cache_data.clear(); gen = True
 
-    # Wishlist + Points
-    user = _cur_user()
-    if user and WISHLIST_OK:
+    # ── Wishlist & Points (only shown when logged in) ──────────────
+    # NOTE: _cur_user() is called fresh here; LANG is already set above
+    _sidebar_user = _cur_user()
+    if _sidebar_user and WISHLIST_OK:
         with st.expander(_t("wishlist_heading"), expanded=False):
-            render_wishlist_panel(user["username"], LANG)
-    if user and POINTS_OK:
+            try:
+                render_wishlist_panel(_sidebar_user["username"], LANG)
+            except Exception as _wl_e:
+                st.error(f"Wishlist error: {_wl_e}")
+
+    if _sidebar_user and POINTS_OK:
         with st.expander(_t("points_heading"), expanded=False):
-            render_points_panel(user["username"], LANG)
+            try:
+                render_points_panel(_sidebar_user["username"], LANG)
+            except Exception as _pt_e:
+                st.error(f"Points error: {_pt_e}")
 
     st.markdown("---")
-    api_src = "高德地图 (Amap)" if is_cn else "Overpass OSM"
+    api_src    = "高德地图 (Amap)" if is_cn else "Overpass OSM"
     amap_status = "✅ Key loaded" if AMAP_KEY else "⚠️ No key (demo mode)"
     st.caption(f"{_t('data_source')}: {api_src}  ·  {amap_status}")
 
@@ -1939,10 +1977,11 @@ st.markdown(
 )
 
 # ══════════════════════════════════════════════════════════════════
-# MAIN DISPLAY FUNCTION
+# MAIN DISPLAY
 # ══════════════════════════════════════════════════════════════════
 def _run_display(it, df, ci, nd, bud, ctr, tys, lat, lon, hc, dc, ac):
-    real  = sum(len(v) for v in it.values()) if it else 0
+    real  = sum(len(v) for v in it.values()
+                if isinstance(v, list)) if it else 0
     avg_r = df["rating"].replace(0, float("nan")).mean()
     du    = round(sum(bud)/len(bud)) if bud else 60
     bstr  = f"${sum(bud)}" if len(set(bud)) > 1 else f"${du}/day"
@@ -1956,7 +1995,6 @@ def _run_display(it, df, ci, nd, bud, ctr, tys, lat, lon, hc, dc, ac):
     ]):
         c.metric(lbl, val)
 
-    # API key status info for CN
     if ctr == "CN":
         if AMAP_KEY:
             st.info(f"🗺️ 高德地图 API Key 已加载 ({AMAP_KEY[:8]}…) — 正在使用真实数据")
@@ -1988,7 +2026,6 @@ def _run_display(it, df, ci, nd, bud, ctr, tys, lat, lon, hc, dc, ac):
 # GENERATE
 # ══════════════════════════════════════════════════════════════════
 if gen:
-    # Resolve coordinates
     if is_cn:
         lat, lon = city_lat, city_lon
         if lat is None:
@@ -2032,12 +2069,12 @@ if gen:
             try:
                 itinerary = generate_itinerary(
                     df, ndays, day_quotas,
-                    hotel_lat=hotel_c[0]  if hotel_c  else None,
-                    hotel_lon=hotel_c[1]  if hotel_c  else None,
-                    depart_lat=depart_c[0] if depart_c else None,
-                    depart_lon=depart_c[1] if depart_c else None,
-                    arrive_lat=arrive_c[0] if arrive_c else None,
-                    arrive_lon=arrive_c[1] if arrive_c else None,
+                    hotel_lat=hotel_c[0]   if hotel_c   else None,
+                    hotel_lon=hotel_c[1]   if hotel_c   else None,
+                    depart_lat=depart_c[0] if depart_c  else None,
+                    depart_lon=depart_c[1] if depart_c  else None,
+                    arrive_lat=arrive_c[0] if arrive_c  else None,
+                    arrive_lon=arrive_c[1] if arrive_c  else None,
                     day_min_ratings=day_min_ratings,
                     day_anchor_lats=day_anchor_lats,
                     day_anchor_lons=day_anchor_lons,
@@ -2052,15 +2089,20 @@ if gen:
             "_itin": itinerary, "_df": df, "_city": city_input,
             "_ndays": ndays, "_budgets": day_budgets, "_country": country,
             "_types": list(sel_types), "_lat": lat, "_lon": lon,
-            "_hotel": hotel_c, "_depart": depart_c, "_arrive": arrive_c, "_lang": LANG,
+            "_hotel": hotel_c, "_depart": depart_c, "_arrive": arrive_c,
+            "_lang": LANG,
         })
         user = _cur_user()
         if user and WISHLIST_OK:
-            try: _save_itin(user["username"], itinerary, city_input, city_input.title())
-            except Exception: pass
+            try:
+                _save_itin(user["username"], itinerary, city_input, city_input.title())
+            except Exception:
+                pass
         if user and POINTS_OK:
-            try: add_points(user["username"], "share", note=city_input)
-            except Exception: pass
+            try:
+                add_points(user["username"], "share", note=city_input)
+            except Exception:
+                pass
 
     _run_display(itinerary, df, city_input, ndays, day_budgets, country,
                  sel_types, lat, lon, hotel_c, depart_c, arrive_c)
@@ -2069,20 +2111,19 @@ elif "_itin" in st.session_state and "_df" in st.session_state:
     _run_display(
         st.session_state["_itin"],
         st.session_state["_df"],
-        st.session_state.get("_city", city_input),
-        st.session_state.get("_ndays", ndays),
+        st.session_state.get("_city",    city_input),
+        st.session_state.get("_ndays",   ndays),
         st.session_state.get("_budgets", day_budgets),
         st.session_state.get("_country", country),
-        st.session_state.get("_types", list(sel_types)),
-        st.session_state.get("_lat", city_lat or 35.),
-        st.session_state.get("_lon", city_lon or 139.),
+        st.session_state.get("_types",   list(sel_types)),
+        st.session_state.get("_lat",     city_lat or 35.),
+        st.session_state.get("_lon",     city_lon or 139.),
         st.session_state.get("_hotel"),
         st.session_state.get("_depart"),
         st.session_state.get("_arrive"),
     )
 
 else:
-    # Welcome state
     st.markdown("---")
     for col, (icon, title, desc) in zip(st.columns(4), [
         (_t("welcome_1_icon"), _t("welcome_1_title"), _t("welcome_1_desc")),
@@ -2099,4 +2140,3 @@ else:
                 f'</div>',
                 unsafe_allow_html=True,
             )
-
