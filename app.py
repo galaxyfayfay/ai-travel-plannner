@@ -27,7 +27,7 @@ def _get_secret(key: str) -> str:
     return os.getenv(key, "")
 
 # Now safe to call
-AMAP_KEY     = _get_secret("APIKEY")
+AMAP_KEY     = os.environ.get("APIKEY")
 DEEPSEEK_KEY = _get_secret("DEEPSEEKKEY")
         
 
