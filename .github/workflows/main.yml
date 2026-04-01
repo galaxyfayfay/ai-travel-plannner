@@ -1,0 +1,8 @@
+steps:
+  - uses: actions/checkout@v3
+  
+  - name: Run Streamlit App
+    env:
+      APIKEY: ${{ secrets.APIKEY }}
+      DEEPSEEKKEY: ${{ secrets.DEEPSEEKKEY }}
+    run: streamlit run app.py
