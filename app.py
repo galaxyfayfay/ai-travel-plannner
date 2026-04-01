@@ -1,3 +1,27 @@
+AMAP_KEY = _get_secret("APIKEY")
+DEEPSEEK_KEY = _get_secret("DEEPSEEKKEY")
+
+# 临时调试 — 确认后可删除
+if AMAP_KEY:
+    st.sidebar.success(f"✅ Key loaded: {AMAP_KEY[:6]}...{AMAP_KEY[-4:]}")
+else:
+    st.sidebar.error("❌ APIKEY not found in secrets")
+
+# 测试 API 连通性
+if AMAP_KEY:
+    try:
+        test = requests.get(
+            "https://restapi.amap.com/v3/geocode/geo",
+            params={"key": AMAP_KEY, "address": "北京", "output": "json"},
+            timeout=5
+        ).json()
+        if test.get("status") == "1":
+            st.sidebar.success("✅ Amap API working")
+        else:
+            st.sidebar.error(f"❌ Amap error: {test.get('infocode')} - {test.get('info')}")
+    except Exception as e:
+        st.sidebar.error(f"❌ Network error: {e}")
+        
 """
 app.py v15 — AI Travel Planner Pro
 Clean UI, time estimates, working wishlist, simplified sidebar
