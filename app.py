@@ -1,23 +1,29 @@
-import streamlit as st
-import requests
+"""
+AI Travel Planner — Multi-Step Wizard
+Luxury-grade, Apple-glass aesthetic, Purple/Translucent
+Steps: 1) Login/Guest  2) Destination  3) Preferences  4) Itinerary
+"""
+
 import math
 import random
-import pandas as pd
-import folium
-from streamlit_folium import st_folium
-import os
-import json
 import re
+import json
+import os
 from datetime import datetime, timedelta
 
+import pandas as pd
+import requests
+import streamlit as st
+
+# ── Page config ──────────────────────────────────────────────────
 st.set_page_config(
-    page_title="AI Travel Planner",
-    page_icon="✈️",
+    page_title="Voyager — AI Travel Planner",
+    page_icon="✦",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-# ── MUST be defined BEFORE use ──────────────────────────────────
+# ── Secret helpers ────────────────────────────────────────────────
 def _get_secret(key: str) -> str:
     try:
         val = st.secrets.get(key, "")
@@ -26,70 +32,10 @@ def _get_secret(key: str) -> str:
         pass
     return os.getenv(key, "")
 
-# Now safe to call
 AMAP_KEY     = _get_secret("APIKEY")
 DEEPSEEK_KEY = _get_secret("DEEPSEEKKEY")
-        
 
-# ══════════════════════════════════════════════════════════════════
-# LANG
-# ══════════════════════════════════════════════════════════════════
-if "lang_sel" not in st.session_state:
-    st.session_state["lang_sel"] = "EN"
-LANG = "ZH" if st.session_state.get("lang_sel","EN") == "ZH" else "EN"
-
-# ══════════════════════════════════════════════════════════════════
-# i18n
-# ══════════════════════════════════════════════════════════════════
-try:
-    from i18n import t as _ti
-    def _t(key, **kw): return _ti(key, LANG, **kw)
-    I18N_OK = True
-except Exception:
-    I18N_OK = False
-    def _t(key, **kw):
-        FB = {
-            "build_btn": "Build Itinerary",
-            "refresh_btn": "Shuffle",
-            "auth_login": "Sign In",
-            "auth_register": "Register",
-            "auth_logout": "Sign Out",
-            "auth_username": "Username",
-            "auth_password": "Password",
-            "auth_email": "Email",
-            "wishlist_heading": "Wishlist",
-            "points_heading": "Points",
-            "budget_heading": "Cost Estimate",
-            "budget_total": "Total",
-            "budget_breakdown": "Breakdown",
-            "budget_over": "Some days may exceed budget.",
-            "export_heading": "Export",
-            "map_heading": "Route Map",
-            "map_caption": "Tap markers for details",
-            "transport_cmp": "Transport Options",
-            "last_stop": "Last stop",
-            "rec_heading": "Explore More",
-            "rec_caption": "More places worth visiting.",
-            "ai_rec_heading": "AI Must-See",
-            "ai_rec_caption": "Famous highlights",
-            "add_to_day": "Add to Day",
-            "err_city_nf": "City not found: {city}",
-            "err_itin_fail": "Itinerary error: {err}",
-            "err_map_fail": "Map error: {err}",
-            "err_no_places": "No places found.",
-            "err_export_fail": "Export error: {err}",
-            "collab_heading": "Collaborate",
-            "auth_login_req": "Sign in to continue.",
-        }
-        text = FB.get(key, key)
-        if kw:
-            try: text = text.format(**kw)
-            except Exception: pass
-        return text
-
-# ══════════════════════════════════════════════════════════════════
-# MODULE IMPORTS
-# ══════════════════════════════════════════════════════════════════
+# ── Optional module imports ───────────────────────────────────────
 try:
     from ai_planner import generate_itinerary
     AI_OK = True
@@ -97,16 +43,28 @@ except Exception as _e:
     AI_OK = False; _AI_ERR = str(_e)
 
 try:
-    from transport_planner import render_transport_comparison
+    from transport_planner import render_transport_comparison, build_day_schedule, estimate_travel
     TRANSPORT_OK = True
 except Exception:
     TRANSPORT_OK = False
 
 try:
-    from meal_planner import render_meal_panel
-    MEAL_OK = True
+    from auth_manager import register_user, login_user, get_user_from_session, logout_user, create_collab_link, join_collab
+    AUTH_OK = True
 except Exception:
-    MEAL_OK = False
+    AUTH_OK = False
+
+try:
+    from wishlist_manager import add_to_wishlist as _wl_add, remove_from_wishlist as _wl_remove, get_wishlist as _wl_get, is_in_wishlist as _wl_check, save_itinerary as _save_itin_ext, swap_place_in_itinerary
+    WISHLIST_EXT = True
+except Exception:
+    WISHLIST_EXT = False
+
+try:
+    from points_system import add_points, get_points, render_points_panel
+    POINTS_OK = True
+except Exception:
+    POINTS_OK = False
 
 try:
     from data_manager import get_must_see
@@ -115,693 +73,752 @@ except Exception:
     DATA_MGR_OK = False
 
 try:
-    from auth_manager import (
-        register_user, login_user, get_user_from_session,
-        logout_user, create_collab_link, join_collab,
-    )
-    AUTH_OK = True
+    import folium
+    from streamlit_folium import st_folium
+    FOLIUM_OK = True
 except Exception:
-    AUTH_OK = False
-
-# ── Wishlist — in-memory fallback so it ALWAYS works ──────────────
-try:
-    from wishlist_manager import (
-        add_to_wishlist as _wl_add,
-        remove_from_wishlist as _wl_remove,
-        get_wishlist as _wl_get,
-        is_in_wishlist as _wl_check,
-        save_itinerary as _save_itin_ext,
-        render_wishlist_panel as _render_wl_ext,
-        swap_place_in_itinerary,
-    )
-    WISHLIST_EXT = True
-except Exception:
-    WISHLIST_EXT = False
-
-WISHLIST_OK = True  # always available via session fallback
-
-def _wl_key(username): return f"_wl_{username}"
-def _itin_key(username): return f"_saved_itins_{username}"
-
-def wl_add(username, place):
-    if WISHLIST_EXT:
-        try: _wl_add(username, place); return
-        except Exception: pass
-    k = _wl_key(username)
-    lst = st.session_state.get(k, [])
-    names = {p.get("name","") for p in lst}
-    if place.get("name","") not in names:
-        lst.append(place)
-        st.session_state[k] = lst
-
-def wl_remove(username, name):
-    if WISHLIST_EXT:
-        try: _wl_remove(username, name); return
-        except Exception: pass
-    k = _wl_key(username)
-    lst = st.session_state.get(k, [])
-    st.session_state[k] = [p for p in lst if p.get("name","") != name]
-
-def wl_get(username):
-    if WISHLIST_EXT:
-        try: return _wl_get(username)
-        except Exception: pass
-    return st.session_state.get(_wl_key(username), [])
-
-def wl_check(username, name):
-    if WISHLIST_EXT:
-        try: return _wl_check(username, name)
-        except Exception: pass
-    lst = st.session_state.get(_wl_key(username), [])
-    return any(p.get("name","") == name for p in lst)
-
-def save_itin(username, itinerary, city, title):
-    if WISHLIST_EXT:
-        try: _save_itin_ext(username, itinerary, city, title); return
-        except Exception: pass
-    k = _itin_key(username)
-    saved = st.session_state.get(k, [])
-    saved.append({"city": city, "title": title, "data": itinerary,
-                  "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M")})
-    st.session_state[k] = saved[-10:]  # keep last 10
-
-def render_wishlist_sidebar(username):
-    lst = wl_get(username)
-    if not lst:
-        st.caption("Nothing saved yet.")
-        return
-    for p in lst:
-        nm = p.get("name","")
-        tp = p.get("type","")
-        col1, col2 = st.columns([5,1])
-        with col1:
-            st.markdown(
-                f'<div style="font-size:.8rem;font-weight:600;color:#1e1b4b">{nm}</div>'
-                f'<div style="font-size:.70rem;color:#a78bfa">{tp}</div>',
-                unsafe_allow_html=True,
-            )
-        with col2:
-            if st.button("×", key=f"wl_rm_{nm[:8]}", help="Remove"):
-                wl_remove(username, nm)
-                st.rerun()
-    # Saved itineraries
-    saved_it = st.session_state.get(_itin_key(username), [])
-    if saved_it:
-        st.markdown("---")
-        st.caption("Saved itineraries")
-        for s in saved_it[-3:]:
-            st.markdown(
-                f'<div style="font-size:.78rem;color:#1e1b4b">'
-                f'{s.get("title","")} &nbsp;'
-                f'<span style="color:#c4b5fd">{s.get("saved_at","")}</span></div>',
-                unsafe_allow_html=True,
-            )
-
-try:
-    from points_system import add_points, get_points, render_points_panel
-    POINTS_OK = True
-except Exception:
-    POINTS_OK = False
+    FOLIUM_OK = False
 
 # ══════════════════════════════════════════════════════════════════
-# PLACE DURATION ESTIMATES (minutes)
-# ══════════════════════════════════════════════════════════════════
-DURATION_MAP = {
-    "🏛️ Attraction": 90,
-    "🍜 Restaurant":  60,
-    "☕ Cafe":         45,
-    "🌿 Park":         60,
-    "🛍️ Shopping":   90,
-    "🍺 Bar/Nightlife": 90,
-    "🏨 Hotel":        20,
-}
-
-DURATION_SPECIAL = {
-    # key words → minutes
-    "museum":     120, "palace":    120, "castle":   120,
-    "temple":      60, "shrine":     45, "cathedral": 60,
-    "market":      75, "bazaar":     75, "gallery":   75,
-    "park":        60, "garden":     75, "nature":    90,
-    "tower":       45, "viewpoint":  30, "crossing":  20,
-    "restaurant":  60, "dining":     75, "food":      60,
-    "cafe":        45, "coffee":     45,
-    "mall":        90, "shopping":   90, "district": 75,
-    "bar":         90, "nightlife": 120, "lounge":    90,
-    "beach":       90, "hot spring": 120,
-    "aquarium":    90, "zoo":       120,
-}
-
-def estimate_duration(name: str, type_label: str) -> int:
-    """Return estimated visit duration in minutes."""
-    name_lc = (name or "").lower()
-    for kw, mins in DURATION_SPECIAL.items():
-        if kw in name_lc:
-            return mins
-    return DURATION_MAP.get(type_label, 60)
-
-def format_duration(mins: int) -> str:
-    if mins < 60: return f"{mins}min"
-    h = mins // 60; m = mins % 60
-    return f"{h}h {m}min" if m else f"{h}h"
-
-def build_day_timeline(stops: list, start_hour: int = 9) -> list:
-    """
-    Given a list of stops (dicts), assign arrival/departure times.
-    Returns enriched stops with 'arrive_time', 'depart_time', 'duration_min'.
-    """
-    result = []
-    current_minutes = start_hour * 60  # minutes since midnight
-
-    for i, s in enumerate(stops):
-        tl   = s.get("type_label", "🏛️ Attraction")
-        nm   = s.get("name", "")
-        dur  = estimate_duration(nm, tl)
-
-        # Travel time from prev stop (use transport info if available)
-        if i > 0:
-            tr = stops[i-1].get("transport_to_next") or {}
-            travel_str = tr.get("duration", "")
-            travel_min = _parse_duration_str(travel_str)
-            current_minutes += travel_min
-        
-        # Lunch break: if arriving 12:00-13:30 and this is NOT a restaurant, add 45min buffer
-        if 720 <= current_minutes <= 810 and "Restaurant" not in tl and "Cafe" not in tl:
-            if i > 0:  # not first stop
-                current_minutes = max(current_minutes, 780)  # push to at least 13:00
-
-        arrive_h = current_minutes // 60
-        arrive_m = current_minutes % 60
-        depart_minutes = current_minutes + dur
-        depart_h = depart_minutes // 60
-        depart_m = depart_minutes % 60
-
-        enriched = dict(s)
-        enriched["arrive_time"]  = f"{arrive_h:02d}:{arrive_m:02d}"
-        enriched["depart_time"]  = f"{depart_h:02d}:{depart_m:02d}"
-        enriched["duration_min"] = dur
-
-        result.append(enriched)
-        current_minutes = depart_minutes
-
-        # Short break between stops (15 min)
-        if i < len(stops) - 1:
-            current_minutes += 15
-
-    return result
-
-def _parse_duration_str(s: str) -> int:
-    """Parse '25 min', '1 hr 10 min', '1h30m' etc → minutes."""
-    if not s: return 20
-    s = s.lower().strip()
-    total = 0
-    h = re.search(r'(\d+)\s*h', s)
-    m = re.search(r'(\d+)\s*m', s)
-    if h: total += int(h.group(1)) * 60
-    if m: total += int(m.group(1))
-    return total if total > 0 else 20
-
-# ══════════════════════════════════════════════════════════════════
-# LAVENDER GLASS CSS — simplified
+# GLOBAL CSS — Luxury Apple Glass
 # ══════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
 
-html,body,[class*="css"]{
-  font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
-  -webkit-font-smoothing:antialiased;
-}
-.stApp{
-  background:linear-gradient(150deg,#f5f3ff 0%,#ede9fe 40%,#faf5ff 100%) !important;
-  min-height:100vh;
-}
-section[data-testid="stSidebar"]{
-  background:rgba(255,255,255,0.75) !important;
-  backdrop-filter:blur(24px) !important;
-  border-right:1px solid rgba(139,92,246,0.10) !important;
-}
-.main .block-container{ padding:1.6rem 2rem 3rem; max-width:1060px; }
-
-/* Glass card */
-.g-card{
-  background:rgba(255,255,255,0.75);
-  backdrop-filter:blur(18px);
-  border:1px solid rgba(255,255,255,0.90);
-  border-radius:18px;
-  box-shadow:0 3px 20px rgba(109,40,217,0.06);
-  padding:18px;
-  margin-bottom:12px;
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, [class*="css"] {
+  font-family: 'DM Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Hero */
-.hero{
-  background:linear-gradient(135deg,rgba(237,233,254,.90),rgba(250,245,255,.90));
-  backdrop-filter:blur(30px);
-  border:1px solid rgba(255,255,255,0.92);
-  border-radius:24px;
-  padding:32px 30px;
-  margin-bottom:20px;
-  box-shadow:0 6px 32px rgba(109,40,217,0.08);
-  position:relative; overflow:hidden;
-}
-.hero::before{
-  content:'';position:absolute;top:-60px;right:-50px;
-  width:200px;height:200px;
-  background:radial-gradient(circle,rgba(139,92,246,.14) 0%,transparent 70%);
-  border-radius:50%;pointer-events:none;
-}
-.hero-badge{
-  display:inline-flex;align-items:center;gap:5px;
-  background:rgba(139,92,246,.10);border:1px solid rgba(139,92,246,.20);
-  border-radius:20px;padding:3px 12px;
-  font-size:.73rem;color:#7c3aed;font-weight:600;
-  letter-spacing:.04em;margin-bottom:12px;
-}
-.hero-title{
-  font-size:2.1rem;font-weight:700;letter-spacing:-.03em;
-  color:#1e1b4b;margin:0 0 6px;line-height:1.1;
-}
-.hero-sub{font-size:.95rem;color:#6b7280;margin:0;}
-
-/* Section label */
-.s-lbl{
-  font-size:.67rem;font-weight:700;color:#a78bfa;
-  text-transform:uppercase;letter-spacing:.08em;
-  margin:22px 0 8px;
+/* ── App Background ── */
+.stApp {
+  background: linear-gradient(135deg, #0f0a1e 0%, #1a0f3c 30%, #0d1a3a 60%, #0a0f2e 100%) !important;
+  min-height: 100vh;
 }
 
-/* Day header */
-.day-hdr{
-  display:flex;align-items:center;gap:10px;
-  padding:11px 16px;
-  background:rgba(255,255,255,0.80);
-  backdrop-filter:blur(14px);
-  border:1px solid rgba(255,255,255,0.92);
-  border-radius:14px;
-  margin:18px 0 6px;
-  box-shadow:0 2px 10px rgba(109,40,217,0.05);
-}
-.day-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
-.day-ttl{font-weight:700;font-size:.86rem;color:#1e1b4b;flex:1;}
-.day-info{font-size:.72rem;color:#9ca3af;}
-
-/* Stop row */
-.stop-row{
-  background:rgba(255,255,255,0.70);
-  border:1px solid rgba(255,255,255,0.88);
-  border-radius:13px;
-  padding:12px 14px;
-  margin-bottom:6px;
-}
-.sn{
-  width:24px;height:24px;border-radius:50%;
-  display:inline-flex;align-items:center;justify-content:center;
-  color:#fff;font-size:10px;font-weight:700;flex-shrink:0;
-}
-.stop-name{font-weight:600;font-size:.86rem;color:#1e1b4b;}
-.stop-meta{font-size:.72rem;color:#9ca3af;margin-top:1px;}
-.time-badge{
-  display:inline-flex;align-items:center;gap:4px;
-  background:rgba(139,92,246,.09);
-  border:1px solid rgba(139,92,246,.16);
-  border-radius:20px;padding:2px 9px;
-  font-size:.70rem;color:#7c3aed;font-weight:500;
-}
-.dur-badge{
-  display:inline-flex;align-items:center;gap:4px;
-  background:rgba(245,158,11,.09);
-  border:1px solid rgba(245,158,11,.18);
-  border-radius:20px;padding:2px 9px;
-  font-size:.70rem;color:#d97706;font-weight:500;
-}
-.tr-chip{
-  display:inline-flex;align-items:center;gap:4px;
-  background:rgba(56,189,248,.08);
-  border:1px solid rgba(56,189,248,.18);
-  border-radius:20px;padding:2px 8px;
-  font-size:.70rem;color:#0284c7;font-weight:500;
+/* Hide default sidebar */
+section[data-testid="stSidebar"] { display: none !important; }
+.main .block-container {
+  padding: 0 !important;
+  max-width: 100% !important;
 }
 
-/* Budget card */
-.b-card{
-  background:rgba(255,255,255,0.72);
-  border:1px solid rgba(255,255,255,0.90);
-  border-radius:14px;padding:14px;text-align:center;
-  box-shadow:0 2px 10px rgba(109,40,217,0.04);
+/* ── Orb Background Effects ── */
+.orb-container {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 0; overflow: hidden;
 }
-.b-amt{font-size:1.4rem;font-weight:700;color:#1e1b4b;letter-spacing:-.02em;}
-.b-lbl{font-size:.67rem;color:#a78bfa;font-weight:600;text-transform:uppercase;
-       letter-spacing:.05em;margin-bottom:5px;}
-.b-sub{font-size:.69rem;color:#c4b5fd;margin-top:3px;}
+.orb {
+  position: absolute; border-radius: 50%;
+  filter: blur(80px); opacity: 0.18;
+  animation: orbFloat 12s ease-in-out infinite alternate;
+}
+.orb-1 { width: 500px; height: 500px; background: #7c3aed; top: -100px; left: -100px; animation-delay: 0s; }
+.orb-2 { width: 400px; height: 400px; background: #4f46e5; top: 30%; right: -80px; animation-delay: 3s; }
+.orb-3 { width: 350px; height: 350px; background: #9333ea; bottom: 10%; left: 20%; animation-delay: 6s; }
+.orb-4 { width: 300px; height: 300px; background: #6d28d9; top: 60%; right: 30%; animation-delay: 2s; }
 
-/* Rec card — simpler */
-.r-card{
-  background:rgba(255,255,255,0.72);
-  border:1px solid rgba(255,255,255,0.88);
-  border-radius:13px;padding:12px 14px;
-  box-shadow:0 1px 6px rgba(109,40,217,0.04);
-  margin-bottom:8px;
-}
-.r-name{font-weight:600;font-size:.83rem;color:#1e1b4b;margin-bottom:2px;}
-.r-meta{font-size:.71rem;color:#9ca3af;}
-.r-cost{font-size:.70rem;color:#a78bfa;font-weight:500;margin-top:4px;}
-
-/* AI panel */
-.ai-panel{
-  background:rgba(255,255,255,0.68);
-  border:1px solid rgba(255,255,255,0.88);
-  border-radius:16px;padding:16px;margin:10px 0;
-  box-shadow:0 3px 16px rgba(109,40,217,0.05);
-}
-.ai-item{
-  background:rgba(255,255,255,0.80);
-  border-radius:10px;padding:10px 12px;margin:5px 0;
-  border-left:3px solid #a78bfa;
+@keyframes orbFloat {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(30px, -30px) scale(1.1); }
 }
 
-/* Swap panel */
-.sw-panel{
-  background:rgba(255,255,255,0.68);
-  border:1px solid rgba(255,255,255,0.88);
-  border-radius:14px;padding:14px;margin:6px 0;
+/* ── Wizard Container ── */
+.wizard-wrap {
+  position: relative; z-index: 1;
+  min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 32px 20px 60px;
 }
 
-/* Banners */
-.ok{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.18);
-    border-radius:10px;padding:8px 12px;font-size:.79rem;color:#15803d;}
-.warn{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.18);
-      border-radius:10px;padding:8px 12px;font-size:.79rem;color:#b45309;}
-.info{background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.18);
-      border-radius:10px;padding:8px 12px;font-size:.79rem;color:#6d28d9;}
+/* ── Progress Bar ── */
+.progress-bar-outer {
+  width: 100%; max-width: 720px; margin: 0 auto 40px;
+}
+.progress-steps {
+  display: flex; align-items: center; justify-content: center; gap: 0;
+  position: relative;
+}
+.progress-step {
+  display: flex; flex-direction: column; align-items: center; flex: 1;
+  position: relative; z-index: 1;
+}
+.step-circle {
+  width: 44px; height: 44px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 600; font-family: 'DM Sans', sans-serif;
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+}
+.step-circle.done {
+  background: linear-gradient(135deg, #7c3aed, #9333ea);
+  border: 2px solid rgba(167,139,250,0.6);
+  color: white;
+  box-shadow: 0 0 20px rgba(124,58,237,0.5), 0 0 40px rgba(124,58,237,0.2);
+}
+.step-circle.active {
+  background: linear-gradient(135deg, #8b5cf6, #a78bfa);
+  border: 2px solid rgba(196,181,253,0.8);
+  color: white;
+  box-shadow: 0 0 30px rgba(139,92,246,0.7), 0 0 60px rgba(139,92,246,0.3);
+  transform: scale(1.12);
+}
+.step-circle.pending {
+  background: rgba(255,255,255,0.04);
+  border: 2px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.3);
+}
+.step-label {
+  margin-top: 8px; font-size: 0.68rem; font-weight: 500;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  transition: color 0.3s;
+}
+.step-label.active { color: #c4b5fd; }
+.step-label.done   { color: rgba(167,139,250,0.8); }
+.step-label.pending{ color: rgba(255,255,255,0.25); }
 
-/* Sidebar */
-.sb-lbl{
-  font-size:.65rem;font-weight:700;color:#a78bfa;
-  text-transform:uppercase;letter-spacing:.08em;margin:12px 0 5px;
+.step-connector {
+  flex: 1; height: 2px; margin: 0;
+  background: rgba(255,255,255,0.08);
+  position: relative; top: -22px; z-index: 0;
 }
-.user-card{
-  background:rgba(139,92,246,.07);
-  border:1px solid rgba(139,92,246,.14);
-  border-radius:12px;padding:10px 12px;
-  display:flex;align-items:center;gap:9px;
-  margin-bottom:8px;
+.step-connector.done-connector {
+  background: linear-gradient(90deg, #7c3aed, #9333ea);
+  box-shadow: 0 0 8px rgba(124,58,237,0.4);
 }
-.u-av{
-  width:32px;height:32px;border-radius:50%;
-  background:linear-gradient(135deg,#8b5cf6,#a78bfa);
-  display:flex;align-items:center;justify-content:center;
-  color:#fff;font-weight:700;font-size:.84rem;flex-shrink:0;
-}
-.u-name{font-weight:600;font-size:.82rem;color:#1e1b4b;}
-.u-pts{font-size:.70rem;color:#a78bfa;}
 
-/* Welcome */
-.wc-grid{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;}
-.wc{
-  background:rgba(255,255,255,.72);
-  border:1px solid rgba(255,255,255,.90);
-  border-radius:16px;padding:20px 16px;
-  flex:1;min-width:140px;text-align:center;
-  box-shadow:0 2px 10px rgba(109,40,217,0.04);
+/* ── Glass Card ── */
+.glass-card {
+  background: rgba(255,255,255,0.04);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 28px;
+  padding: 44px 48px;
+  width: 100%; max-width: 720px;
+  box-shadow:
+    0 0 0 1px rgba(139,92,246,0.08) inset,
+    0 40px 80px rgba(0,0,0,0.4),
+    0 0 60px rgba(124,58,237,0.08);
+  position: relative; overflow: hidden;
 }
-.wc-i{font-size:1.4rem;margin-bottom:8px;}
-.wc-t{font-weight:700;font-size:.84rem;color:#1e1b4b;margin-bottom:3px;}
-.wc-d{font-size:.74rem;color:#9ca3af;line-height:1.4;}
+.glass-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(196,181,253,0.3), transparent);
+}
 
-/* Streamlit overrides */
-.stButton>button{
-  border-radius:10px !important;
-  font-family:'Inter',sans-serif !important;
-  font-weight:500 !important;font-size:.81rem !important;
-  border:1px solid rgba(139,92,246,.16) !important;
-  background:rgba(255,255,255,.82) !important;
-  color:#1e1b4b !important;
-  transition:all .15s !important;
+/* ── Hero Title ── */
+.step-hero-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; color: rgba(167,139,250,0.7);
+  margin-bottom: 10px;
 }
-.stButton>button:hover{
-  background:rgba(255,255,255,.96) !important;
-  box-shadow:0 2px 12px rgba(109,40,217,.12) !important;
-  border-color:rgba(139,92,246,.28) !important;
+.step-hero-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 2.8rem; font-weight: 300; color: #fff;
+  line-height: 1.1; margin: 0 0 10px;
+  letter-spacing: -0.02em;
 }
-.stButton>button[kind="primary"]{
-  background:linear-gradient(135deg,#8b5cf6,#7c3aed) !important;
-  color:#fff !important;border:none !important;
-  box-shadow:0 3px 14px rgba(109,40,217,.28) !important;
+.step-hero-title em {
+  font-style: italic; color: #c4b5fd;
 }
-.stButton>button[kind="primary"]:hover{
-  box-shadow:0 5px 20px rgba(109,40,217,.36) !important;
+.step-hero-sub {
+  font-size: 0.88rem; color: rgba(255,255,255,0.4);
+  font-weight: 300; margin-bottom: 36px; line-height: 1.6;
 }
-.stSelectbox>div>div,
-.stMultiSelect>div>div,
-.stTextInput>div>div>input,
-.stNumberInput>div>div>input{
-  border-radius:9px !important;
-  border:1px solid rgba(139,92,246,.14) !important;
-  background:rgba(255,255,255,.82) !important;
-  font-size:.81rem !important;color:#1e1b4b !important;
+
+/* ── Option Cards (for Step 1, 2, 3 choices) ── */
+.opt-grid {
+  display: grid; gap: 14px; margin: 24px 0;
 }
-.stSlider>div>div>div>div{background:#8b5cf6 !important;}
-.stTabs [data-baseweb="tab-list"]{
-  background:rgba(255,255,255,.65) !important;
-  border-radius:11px !important;padding:3px !important;
-  border:1px solid rgba(255,255,255,.84) !important;
+.opt-grid-2 { grid-template-columns: 1fr 1fr; }
+.opt-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+.opt-card {
+  background: rgba(255,255,255,0.04);
+  border: 1.5px solid rgba(255,255,255,0.08);
+  border-radius: 18px; padding: 22px 20px;
+  cursor: pointer; transition: all 0.25s ease;
+  text-align: center; position: relative; overflow: hidden;
 }
-.stTabs [data-baseweb="tab"]{
-  border-radius:8px !important;font-size:.77rem !important;
-  font-weight:500 !important;padding:4px 10px !important;color:#9ca3af !important;
+.opt-card::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.15), transparent 70%);
+  opacity: 0; transition: opacity 0.25s;
 }
-.stTabs [aria-selected="true"]{
-  background:rgba(255,255,255,.92) !important;
-  color:#1e1b4b !important;box-shadow:0 1px 4px rgba(109,40,217,.08) !important;
+.opt-card:hover::before { opacity: 1; }
+.opt-card:hover {
+  border-color: rgba(139,92,246,0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(124,58,237,0.2);
 }
-.stExpander{
-  background:rgba(255,255,255,.68) !important;
-  border:1px solid rgba(255,255,255,.88) !important;
-  border-radius:12px !important;overflow:hidden !important;
+.opt-card.selected {
+  background: rgba(139,92,246,0.12);
+  border-color: rgba(167,139,250,0.6);
+  box-shadow: 0 0 0 1px rgba(167,139,250,0.2) inset, 0 12px 40px rgba(124,58,237,0.25);
 }
-div[data-testid="stMetric"]{
-  background:rgba(255,255,255,.72) !important;
-  border-radius:13px !important;padding:11px 15px !important;
-  border:1px solid rgba(255,255,255,.90) !important;
-  box-shadow:0 2px 8px rgba(109,40,217,.04) !important;
+.opt-card.selected::before { opacity: 1; }
+.opt-icon { font-size: 2rem; margin-bottom: 10px; }
+.opt-title { font-weight: 600; font-size: 0.88rem; color: #fff; margin-bottom: 4px; }
+.opt-sub   { font-size: 0.75rem; color: rgba(255,255,255,0.35); }
+
+/* ── Destination Pills ── */
+.dest-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 100px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 0.8rem; color: rgba(255,255,255,0.55);
+  cursor: pointer; transition: all 0.2s;
+  margin: 4px; white-space: nowrap;
 }
-div[data-testid="stMetric"] label{
-  font-size:.67rem !important;color:#a78bfa !important;
-  text-transform:uppercase !important;letter-spacing:.06em !important;font-weight:600 !important;
+.dest-pill:hover {
+  background: rgba(139,92,246,0.15);
+  border-color: rgba(167,139,250,0.4);
+  color: #c4b5fd;
 }
-div[data-testid="stMetric"] [data-testid="stMetricValue"]{
-  font-size:1.3rem !important;font-weight:700 !important;color:#1e1b4b !important;
+.dest-pill.selected {
+  background: rgba(139,92,246,0.2);
+  border-color: rgba(167,139,250,0.6);
+  color: #c4b5fd;
 }
-div[data-testid="stDownloadButton"] button{
-  background:rgba(139,92,246,.10) !important;color:#7c3aed !important;
-  border:1px solid rgba(139,92,246,.20) !important;border-radius:10px !important;
+.pills-wrap { display: flex; flex-wrap: wrap; gap: 0; margin: 16px 0; }
+
+/* ── Nav Buttons ── */
+.nav-row {
+  display: flex; gap: 12px; margin-top: 36px;
+  justify-content: space-between; align-items: center;
 }
-.stAlert{border-radius:11px !important;border:none !important;}
-.stCaption{color:#c4b5fd !important;font-size:.71rem !important;}
-hr{border:none;border-top:1px solid rgba(139,92,246,.09) !important;margin:14px 0 !important;}
+.btn-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 12px 24px; border-radius: 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.5); font-size: 0.84rem;
+  cursor: pointer; font-family: 'DM Sans', sans-serif;
+  font-weight: 500; transition: all 0.2s;
+  text-decoration: none;
+}
+.btn-back:hover {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.8);
+}
+.btn-next {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 32px; border-radius: 12px;
+  background: linear-gradient(135deg, #7c3aed 0%, #9333ea 100%);
+  border: 1px solid rgba(167,139,250,0.3);
+  color: white; font-size: 0.88rem; font-weight: 600;
+  cursor: pointer; font-family: 'DM Sans', sans-serif;
+  box-shadow: 0 8px 32px rgba(124,58,237,0.4), 0 0 0 1px rgba(167,139,250,0.15) inset;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  text-decoration: none; flex: 1; justify-content: center;
+}
+.btn-next:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 16px 48px rgba(124,58,237,0.5), 0 0 0 1px rgba(196,181,253,0.25) inset;
+}
+
+/* ── Streamlit Widget Overrides ── */
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input {
+  background: rgba(255,255,255,0.05) !important;
+  border: 1.5px solid rgba(255,255,255,0.10) !important;
+  border-radius: 12px !important;
+  color: #fff !important;
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 0.88rem !important;
+  padding: 14px 18px !important;
+  transition: border-color 0.2s !important;
+}
+.stTextInput > div > div > input:focus,
+.stNumberInput > div > div > input:focus {
+  border-color: rgba(167,139,250,0.5) !important;
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.15) !important;
+  outline: none !important;
+}
+.stTextInput > div > div > input::placeholder { color: rgba(255,255,255,0.25) !important; }
+.stTextInput label, .stNumberInput label, .stSelectbox label,
+.stMultiSelect label, .stSlider label {
+  color: rgba(255,255,255,0.5) !important;
+  font-size: 0.75rem !important; font-weight: 500 !important;
+  letter-spacing: 0.06em !important; text-transform: uppercase !important;
+  font-family: 'DM Sans', sans-serif !important;
+}
+.stSelectbox > div > div {
+  background: rgba(255,255,255,0.05) !important;
+  border: 1.5px solid rgba(255,255,255,0.10) !important;
+  border-radius: 12px !important;
+  color: #fff !important;
+}
+.stMultiSelect > div > div {
+  background: rgba(255,255,255,0.05) !important;
+  border: 1.5px solid rgba(255,255,255,0.10) !important;
+  border-radius: 12px !important;
+}
+.stMultiSelect span[data-baseweb="tag"] {
+  background: rgba(124,58,237,0.3) !important;
+  border-color: rgba(167,139,250,0.4) !important;
+  color: #c4b5fd !important;
+}
+.stSlider > div > div > div > div { background: #7c3aed !important; }
+.stSlider > div > div > div[data-testid="stSlider"] > div { background: rgba(255,255,255,0.1) !important; }
+
+/* ── Streamlit Button override ── */
+.stButton > button {
+  background: linear-gradient(135deg, #7c3aed 0%, #9333ea 100%) !important;
+  color: white !important; border: none !important;
+  border-radius: 12px !important; font-family: 'DM Sans', sans-serif !important;
+  font-weight: 600 !important; font-size: 0.88rem !important;
+  padding: 14px 28px !important;
+  box-shadow: 0 8px 24px rgba(124,58,237,0.35) !important;
+  transition: all 0.25s !important; width: 100% !important;
+  letter-spacing: 0.02em !important;
+}
+.stButton > button:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 16px 40px rgba(124,58,237,0.5) !important;
+}
+.stButton > button[kind="secondary"] {
+  background: rgba(255,255,255,0.06) !important;
+  color: rgba(255,255,255,0.6) !important;
+  box-shadow: none !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+}
+.stButton > button[kind="secondary"]:hover {
+  background: rgba(255,255,255,0.1) !important;
+  color: rgba(255,255,255,0.9) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: none !important;
+}
+
+/* ── Day Card (Step 4) ── */
+.day-card {
+  background: rgba(255,255,255,0.04);
+  backdrop-filter: blur(20px);
+  border: 1.5px solid rgba(255,255,255,0.08);
+  border-radius: 20px; padding: 24px;
+  margin-bottom: 16px; cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative; overflow: hidden;
+}
+.day-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  opacity: 0; transition: opacity 0.3s;
+}
+.day-card:hover, .day-card.expanded {
+  border-color: rgba(167,139,250,0.4);
+  box-shadow: 0 20px 60px rgba(124,58,237,0.2);
+  transform: translateY(-2px);
+}
+.day-card.expanded::before { opacity: 1; }
+.day-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 100px; font-size: 0.7rem;
+  font-weight: 600; letter-spacing: 0.06em; margin-bottom: 12px;
+}
+.stop-timeline {
+  position: relative; padding-left: 28px;
+}
+.stop-timeline::before {
+  content: ''; position: absolute; left: 10px; top: 14px; bottom: 14px;
+  width: 1.5px; background: rgba(167,139,250,0.2);
+}
+.stop-item {
+  position: relative; padding: 10px 0 10px 16px;
+  border-radius: 10px; margin: 2px 0;
+  transition: background 0.2s;
+}
+.stop-item:hover { background: rgba(255,255,255,0.04); }
+.stop-dot {
+  position: absolute; left: -22px; top: 50%;
+  transform: translateY(-50%);
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.stop-name-txt { font-size: 0.88rem; color: #fff; font-weight: 500; }
+.stop-meta-txt { font-size: 0.72rem; color: rgba(255,255,255,0.4); margin-top: 2px; }
+.time-chip {
+  display: inline-flex; align-items: center;
+  background: rgba(139,92,246,0.12);
+  border: 1px solid rgba(167,139,250,0.2);
+  border-radius: 100px; padding: 2px 10px;
+  font-size: 0.68rem; color: #c4b5fd; font-weight: 500;
+  margin-right: 6px;
+}
+.tr-chip {
+  display: inline-flex; align-items: center;
+  background: rgba(56,189,248,0.08);
+  border: 1px solid rgba(56,189,248,0.18);
+  border-radius: 100px; padding: 2px 10px;
+  font-size: 0.68rem; color: #7dd3fc; font-weight: 500;
+}
+
+/* ── Budget Summary ── */
+.budget-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 16px 0; }
+.budget-cell {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px; padding: 16px; text-align: center;
+}
+.budget-amt { font-size: 1.4rem; font-weight: 700; color: #fff; letter-spacing: -0.03em; }
+.budget-lbl { font-size: 0.65rem; color: rgba(167,139,250,0.7); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+.budget-sub { font-size: 0.68rem; color: rgba(255,255,255,0.3); margin-top: 4px; }
+
+/* ── Map container ── */
+.map-wrap {
+  border-radius: 20px; overflow: hidden;
+  border: 1.5px solid rgba(255,255,255,0.08);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  margin: 20px 0;
+}
+
+/* ── AI Picks Panel ── */
+.ai-panel {
+  background: rgba(124,58,237,0.06);
+  border: 1px solid rgba(167,139,250,0.15);
+  border-radius: 16px; padding: 18px; margin: 12px 0;
+}
+.ai-item {
+  background: rgba(255,255,255,0.04);
+  border-left: 3px solid #a78bfa;
+  border-radius: 10px; padding: 12px 14px; margin: 6px 0;
+}
+
+/* ── Tab override ── */
+.stTabs [data-baseweb="tab-list"] {
+  background: rgba(255,255,255,0.04) !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  gap: 4px !important; padding: 4px !important;
+}
+.stTabs [data-baseweb="tab"] {
+  border-radius: 10px !important; color: rgba(255,255,255,0.4) !important;
+  font-size: 0.80rem !important; font-weight: 500 !important;
+}
+.stTabs [aria-selected="true"] {
+  background: rgba(139,92,246,0.2) !important;
+  color: #c4b5fd !important;
+  box-shadow: 0 0 0 1px rgba(167,139,250,0.2) inset !important;
+}
+
+/* ── Metric ── */
+div[data-testid="stMetric"] {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  border-radius: 16px !important;
+  padding: 16px 20px !important;
+}
+div[data-testid="stMetric"] label {
+  color: rgba(167,139,250,0.7) !important;
+  font-size: 0.67rem !important; font-weight: 600 !important;
+  text-transform: uppercase !important; letter-spacing: 0.08em !important;
+}
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+  color: #fff !important; font-size: 1.35rem !important; font-weight: 700 !important;
+}
+
+/* ── Expander ── */
+.stExpander {
+  background: rgba(255,255,255,0.03) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  border-radius: 14px !important;
+}
+.stExpander summary {
+  color: rgba(255,255,255,0.6) !important; font-size: 0.82rem !important;
+}
+
+/* ── Download button ── */
+div[data-testid="stDownloadButton"] button {
+  background: rgba(139,92,246,0.12) !important;
+  color: #c4b5fd !important;
+  border: 1px solid rgba(167,139,250,0.25) !important;
+  box-shadow: none !important;
+}
+
+/* ── Alerts ── */
+.stAlert { border-radius: 12px !important; }
+div[data-testid="stSuccess"] { background: rgba(34,197,94,0.08) !important; border-color: rgba(34,197,94,0.2) !important; }
+div[data-testid="stError"]   { background: rgba(239,68,68,0.08) !important; border-color: rgba(239,68,68,0.2) !important; }
+div[data-testid="stWarning"] { background: rgba(245,158,11,0.08) !important; border-color: rgba(245,158,11,0.2) !important; }
+div[data-testid="stInfo"]    { background: rgba(139,92,246,0.08) !important; border-color: rgba(139,92,246,0.2) !important; }
+
+/* ── Caption ── */
+.stCaption { color: rgba(167,139,250,0.5) !important; font-size: 0.72rem !important; }
+
+/* ── Dataframe ── */
+.stDataFrame { background: rgba(255,255,255,0.03) !important; border-radius: 12px !important; }
+
+/* ── Drag reorder handle ── */
+.reorder-hint { font-size: 0.72rem; color: rgba(167,139,250,0.5); margin-bottom: 8px; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,0.5); }
 </style>
+
+<!-- Orb background -->
+<div class="orb-container">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+  <div class="orb orb-4"></div>
+</div>
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════
 # CONSTANTS
 # ══════════════════════════════════════════════════════════════════
-BUDGET_LEVELS = [(0,30,"Economy","#16a34a"),(30,80,"Standard","#d97706"),
-                 (80,200,"Comfort","#dc2626"),(200,9999,"Luxury","#7c3aed")]
-def budget_level(usd):
-    for lo,hi,lb,bc in BUDGET_LEVELS:
-        if usd<hi: return lb,bc
-    return "Luxury","#7c3aed"
+CHAIN_BL = ["kfc","mcdonald","starbucks","seven-eleven","family mart","711","lawson","costa coffee"]
+def is_chain(n): return any(k in n.lower() for k in CHAIN_BL)
 
-CURRENCIES = {
-    "CN":[("USD","$",1.0),("CNY","CNY ",7.25)],
-    "JP":[("USD","$",1.0),("JPY","JPY ",155)],
-    "KR":[("USD","$",1.0),("KRW","KRW ",1350)],
-    "TH":[("USD","$",1.0),("THB","THB ",36)],
-    "SG":[("USD","$",1.0),("SGD","SGD ",1.35)],
-    "FR":[("USD","$",1.0),("EUR","EUR ",0.92)],
-    "GB":[("USD","$",1.0),("GBP","GBP ",0.79)],
-    "IT":[("USD","$",1.0),("EUR","EUR ",0.92)],
-    "ES":[("USD","$",1.0),("EUR","EUR ",0.92)],
-    "US":[("USD","$",1.0)],
-    "AU":[("USD","$",1.0),("AUD","AUD ",1.53)],
-    "AE":[("USD","$",1.0),("AED","AED ",3.67)],
-    "NL":[("USD","$",1.0),("EUR","EUR ",0.92)],
-    "TR":[("USD","$",1.0),("TRY","TRY ",32)],
-    "HK":[("USD","$",1.0),("HKD","HKD ",7.82)],
-    "TW":[("USD","$",1.0),("TWD","TWD ",32)],
-    "ID":[("USD","$",1.0),("IDR","IDR ",16000)],
-    "VN":[("USD","$",1.0),("VND","VND ",25000)],
-    "MY":[("USD","$",1.0),("MYR","MYR ",4.7)],
-    "INT":[("USD","$",1.0)],
+def _ss(s):
+    if s is None: return ""
+    s = str(s)
+    for o, n in {"\u2014":"-","\u2013":"-","\u2019":"'","\u2018":"'","\u201c":'"',"\u201d":'"',"\u2026":"..."}.items():
+        s = s.replace(o, n)
+    return s
+
+def _hav(la1, lo1, la2, lo2):
+    R = 6371000
+    dl = math.radians(la2 - la1); dg = math.radians(lo2 - lo1)
+    a = math.sin(dl/2)**2 + math.cos(math.radians(la1))*math.cos(math.radians(la2))*math.sin(dg/2)**2
+    return R * 2 * math.asin(math.sqrt(min(1., a)))
+
+def _hkm(la1, lo1, la2, lo2): return _hav(la1,lo1,la2,lo2)/1000
+
+PTYPES = {
+    "🏛️ Attraction": {"osm":("tourism","attraction"), "amap":"110000","color":"#8b5cf6"},
+    "🍜 Restaurant":  {"osm":("amenity","restaurant"), "amap":"050000","color":"#f59e0b"},
+    "☕ Cafe":         {"osm":("amenity","cafe"),        "amap":"050500","color":"#a78bfa"},
+    "🌿 Park":         {"osm":("leisure","park"),        "amap":"110101","color":"#34d399"},
+    "🛍️ Shopping":    {"osm":("shop","mall"),            "amap":"060000","color":"#f472b6"},
+    "🍺 Bar/Nightlife":{"osm":("amenity","bar"),         "amap":"050600","color":"#fb923c"},
+    "🏨 Hotel":        {"osm":("tourism","hotel"),        "amap":"100000","color":"#38bdf8"},
 }
-def _local_rate(country):
-    p=CURRENCIES.get(country,[("USD","$",1.0)])
-    return (p[1][1],p[1][2]) if len(p)>1 else (p[0][1],p[0][2])
+DAY_COLORS = ["#8b5cf6","#f59e0b","#34d399","#f472b6","#fb923c","#38bdf8","#a78bfa","#6ee7b7"]
 
-def fmt_cur(usd,country):
-    p=CURRENCIES.get(country,[("USD","$",1.0)])
-    parts=[f"${usd}/day"]
-    for _,sym,rate in p[1:]:
-        a=round(usd*rate)
-        parts.append(f"{sym}{a:,}" if a>=10000 else f"{sym}{a}")
-    return " / ".join(parts)
+DURATION_MAP = {
+    "🏛️ Attraction":90, "🍜 Restaurant":60, "☕ Cafe":45,
+    "🌿 Park":60, "🛍️ Shopping":90, "🍺 Bar/Nightlife":90, "🏨 Hotel":20,
+}
+DURATION_SPECIAL = {
+    "museum":120,"palace":120,"castle":120,"temple":60,"shrine":45,"cathedral":60,
+    "market":75,"bazaar":75,"gallery":75,"park":60,"garden":75,"nature":90,
+    "tower":45,"viewpoint":30,"crossing":20,"restaurant":60,"cafe":45,"mall":90,
+    "beach":90,"hot spring":120,"aquarium":90,"zoo":120,
+}
+def estimate_duration(name, type_label):
+    name_lc = (name or "").lower()
+    for kw, mins in DURATION_SPECIAL.items():
+        if kw in name_lc: return mins
+    return DURATION_MAP.get(type_label, 60)
 
-COST_W  = {"🏛️ Attraction":0.18,"🍜 Restaurant":0.25,"☕ Cafe":0.10,
-           "🌿 Park":0.04,"🛍️ Shopping":0.22,"🍺 Bar/Nightlife":0.16,
-           "🏨 Hotel":0.00,"Transport":0.12}
-COST_FL = {"🏛️ Attraction":4,"🍜 Restaurant":6,"☕ Cafe":3,
-           "🌿 Park":0,"🛍️ Shopping":8,"🍺 Bar/Nightlife":5,
-           "🏨 Hotel":0,"Transport":1}
+def format_duration(mins):
+    if mins < 60: return f"{mins}min"
+    h = mins // 60; m = mins % 60
+    return f"{h}h {m}min" if m else f"{h}h"
 
-def cost_est(tl,daily_usd,country):
-    w=COST_W.get(tl,.12); fl=COST_FL.get(tl,2)
-    pv=max(fl,daily_usd*w/2); lo=pv*.65; hi=pv*1.45; mid=(lo+hi)/2
-    sym,rate=_local_rate(country)
-    if country=="US": return mid,f"${round(lo)}-${round(hi)}"
-    return mid,f"${round(lo)}-${round(hi)} ({sym}{round(lo*rate)}-{sym}{round(hi*rate)})"
+def _parse_dur(s):
+    if not s: return 20
+    s = s.lower().strip(); total = 0
+    h = re.search(r'(\d+)\s*h', s)
+    m = re.search(r'(\d+)\s*m', s)
+    if h: total += int(h.group(1))*60
+    if m: total += int(m.group(1))
+    return total if total > 0 else 20
 
-def tr_cost(dist_km,daily_usd,country):
-    base=max(1,daily_usd*.12/5); f=max(1.,dist_km/3.)
-    lo=base*f*.7; hi=base*f*1.4; mid=(lo+hi)/2
-    sym,rate=_local_rate(country)
-    if country=="US": return mid,f"${round(lo)}-${round(hi)}"
-    return mid,f"${round(lo)}-${round(hi)} ({sym}{round(lo*rate)}-{sym}{round(hi*rate)})"
+def build_timeline(stops, start_hour=9):
+    result = []; cur = start_hour * 60
+    for i, s in enumerate(stops):
+        tl = s.get("type_label","🏛️ Attraction")
+        nm = s.get("name","")
+        dur = estimate_duration(nm, tl)
+        if i > 0:
+            tr = stops[i-1].get("transport_to_next") or {}
+            cur += _parse_dur(tr.get("duration",""))
+        arr_h = cur//60; arr_m = cur%60
+        dep = cur + dur
+        dep_h = dep//60; dep_m = dep%60
+        enriched = dict(s)
+        enriched["arrive_time"] = f"{arr_h:02d}:{arr_m:02d}"
+        enriched["depart_time"] = f"{dep_h:02d}:{dep_m:02d}"
+        enriched["duration_min"] = dur
+        result.append(enriched)
+        cur = dep + 15
+    return result
 
-CN_CITIES={
+WORLD_CITIES = {
+    "Japan":["Tokyo","Osaka","Kyoto","Sapporo","Fukuoka","Nagoya","Hiroshima","Nara"],
+    "South Korea":["Seoul","Busan","Incheon","Jeju","Daegu"],
+    "Thailand":["Bangkok","Chiang Mai","Phuket","Pattaya","Koh Samui"],
+    "Vietnam":["Ho Chi Minh City","Hanoi","Da Nang","Hoi An","Nha Trang"],
+    "Indonesia":["Bali","Jakarta","Yogyakarta"],
+    "Malaysia":["Kuala Lumpur","Penang","Malacca","Langkawi"],
+    "Singapore":["Singapore"],
+    "India":["Mumbai","Delhi","Bangalore","Jaipur","Goa","Agra"],
+    "UAE":["Dubai","Abu Dhabi"],
+    "Turkey":["Istanbul","Cappadocia","Antalya"],
+    "France":["Paris","Lyon","Nice","Bordeaux"],
+    "Italy":["Rome","Milan","Florence","Venice","Naples"],
+    "Spain":["Barcelona","Madrid","Seville","Valencia","Granada"],
+    "United Kingdom":["London","Edinburgh","Manchester","Bath","Oxford"],
+    "Germany":["Berlin","Munich","Hamburg","Frankfurt","Cologne"],
+    "Netherlands":["Amsterdam","Rotterdam","Utrecht"],
+    "Switzerland":["Zurich","Geneva","Lucerne","Interlaken","Zermatt"],
+    "Austria":["Vienna","Salzburg","Innsbruck"],
+    "Greece":["Athens","Santorini","Mykonos","Crete"],
+    "Portugal":["Lisbon","Porto","Algarve","Sintra"],
+    "Czech Republic":["Prague","Cesky Krumlov"],
+    "Hungary":["Budapest"],
+    "Poland":["Warsaw","Krakow","Gdansk"],
+    "Croatia":["Dubrovnik","Split","Zagreb"],
+    "Norway":["Oslo","Bergen","Tromso"],
+    "Sweden":["Stockholm","Gothenburg"],
+    "Denmark":["Copenhagen"],
+    "Iceland":["Reykjavik"],
+    "USA":["New York","Los Angeles","Chicago","San Francisco","Miami","Boston","Seattle","Las Vegas","Washington DC"],
+    "Canada":["Toronto","Vancouver","Montreal","Banff","Quebec City"],
+    "Mexico":["Mexico City","Cancun","Oaxaca"],
+    "Brazil":["Rio de Janeiro","Sao Paulo"],
+    "Argentina":["Buenos Aires","Patagonia"],
+    "Peru":["Lima","Cusco","Machu Picchu"],
+    "Australia":["Sydney","Melbourne","Brisbane","Perth","Cairns"],
+    "New Zealand":["Auckland","Queenstown","Wellington"],
+    "Morocco":["Marrakech","Fes","Chefchaouen"],
+    "Egypt":["Cairo","Luxor"],
+    "South Africa":["Cape Town","Johannesburg"],
+    "Kenya":["Nairobi","Masai Mara"],
+    "China":["Beijing","Shanghai","Guangzhou","Shenzhen","Chengdu","Hangzhou","Xi'an","Chongqing"],
+    "Hong Kong":["Hong Kong"],
+    "Taiwan":["Taipei","Tainan","Kaohsiung"],
+}
+COUNTRY_CODES = {
+    "China":"CN","Japan":"JP","South Korea":"KR","Thailand":"TH","Vietnam":"VN",
+    "Indonesia":"ID","Malaysia":"MY","Singapore":"SG","Philippines":"PH","India":"IN",
+    "UAE":"AE","Turkey":"TR","France":"FR","Italy":"IT","Spain":"ES",
+    "United Kingdom":"GB","Germany":"DE","Netherlands":"NL","Switzerland":"CH",
+    "Austria":"AT","Greece":"GR","Portugal":"PT","Czech Republic":"CZ","Hungary":"HU",
+    "Poland":"PL","Croatia":"HR","Norway":"NO","Sweden":"SE","Denmark":"DK",
+    "Finland":"FI","Iceland":"IS","Russia":"RU","USA":"US","Canada":"CA","Mexico":"MX",
+    "Brazil":"BR","Argentina":"AR","Peru":"PE","Colombia":"CO","Australia":"AU",
+    "New Zealand":"NZ","Morocco":"MA","Egypt":"EG","South Africa":"ZA","Kenya":"KE",
+    "Hong Kong":"HK","Taiwan":"TW",
+}
+
+INTL_CITIES = {
+    "tokyo":(35.6762,139.6503,"JP"),
+    "osaka":(34.6937,135.5023,"JP"),
+    "kyoto":(35.0116,135.7681,"JP"),
+    "seoul":(37.5665,126.9780,"KR"),
+    "bangkok":(13.7563,100.5018,"TH"),
+    "singapore":(1.3521,103.8198,"SG"),
+    "paris":(48.8566,2.3522,"FR"),
+    "london":(51.5072,-0.1276,"GB"),
+    "rome":(41.9028,12.4964,"IT"),
+    "barcelona":(41.3851,2.1734,"ES"),
+    "new york":(40.7128,-74.0060,"US"),
+    "new york city":(40.7128,-74.0060,"US"),
+    "sydney":(-33.8688,151.2093,"AU"),
+    "dubai":(25.2048,55.2708,"AE"),
+    "amsterdam":(52.3676,4.9041,"NL"),
+    "istanbul":(41.0082,28.9784,"TR"),
+    "hong kong":(22.3193,114.1694,"HK"),
+    "taipei":(25.0330,121.5654,"TW"),
+    "bali":(-8.3405,115.0920,"ID"),
+    "ho chi minh city":(10.7769,106.7009,"VN"),
+    "kuala lumpur":(3.1390,101.6869,"MY"),
+    "beijing":(39.9042,116.4074,"CN"),
+    "shanghai":(31.2304,121.4737,"CN"),
+    "chengdu":(30.5728,104.0668,"CN"),
+    "vienna":(48.2082,16.3738,"AT"),
+    "berlin":(52.5200,13.4050,"DE"),
+    "munich":(48.1351,11.5820,"DE"),
+    "prague":(50.0755,14.4378,"CZ"),
+    "budapest":(47.4979,19.0402,"HU"),
+    "santorini":(36.3932,25.4615,"GR"),
+    "athens":(37.9838,23.7275,"GR"),
+    "lisbon":(38.7223,-9.1393,"PT"),
+    "marrakech":(31.6295,-7.9811,"MA"),
+    "cairo":(30.0444,31.2357,"EG"),
+    "cape town":(-33.9249,18.4241,"ZA"),
+    "miami":(25.7617,-80.1918,"US"),
+    "los angeles":(34.0522,-118.2437,"US"),
+    "san francisco":(37.7749,-122.4194,"US"),
+    "chicago":(41.8781,-87.6298,"US"),
+    "las vegas":(36.1699,-115.1398,"US"),
+    "cancun":(21.1619,-86.8515,"MX"),
+    "rio de janeiro":(-22.9068,-43.1729,"BR"),
+    "buenos aires":(-34.6037,-58.3816,"AR"),
+    "cusco":(-13.5320,-71.9675,"PE"),
+    "reykjavik":(64.1265,-21.8174,"IS"),
+    "queenstown":(-45.0312,168.6626,"NZ"),
+    "melbourne":(-37.8136,144.9631,"AU"),
+    "edinburgh":(55.9533,-3.1883,"GB"),
+    "florence":(43.7696,11.2558,"IT"),
+    "venice":(45.4408,12.3155,"IT"),
+    "zurich":(47.3769,8.5417,"CH"),
+    "interlaken":(46.6863,7.8632,"CH"),
+    "dubrovnik":(42.6507,18.0944,"HR"),
+    "krakow":(50.0647,19.9450,"PL"),
+}
+
+CN_CITIES = {
     "beijing":(39.9042,116.4074),"shanghai":(31.2304,121.4737),
     "guangzhou":(23.1291,113.2644),"shenzhen":(22.5431,114.0579),
     "chengdu":(30.5728,104.0668),"hangzhou":(30.2741,120.1551),
     "xian":(34.3416,108.9398),"xi'an":(34.3416,108.9398),
     "chongqing":(29.5630,106.5516),"nanjing":(32.0603,118.7969),
-    "wuhan":(30.5928,114.3055),"suzhou":(31.2990,120.5853),
-    "tianjin":(39.3434,117.3616),"qingdao":(36.0671,120.3826),
-    "xiamen":(24.4798,118.0894),"zhengzhou":(34.7466,113.6254),
-    "changsha":(28.2278,112.9388),"kunming":(25.0453,102.7097),
-    "sanya":(18.2526,109.5119),
-}
-INTL_CITIES={
-    "tokyo":(35.6762,139.6503,"JP",["Shinjuku","Shibuya","Asakusa","Harajuku","Ginza"]),
-    "osaka":(34.6937,135.5023,"JP",["Dotonbori","Namba","Umeda","Shinsekai"]),
-    "kyoto":(35.0116,135.7681,"JP",["Gion","Arashiyama","Higashiyama","Fushimi"]),
-    "seoul":(37.5665,126.9780,"KR",["Gangnam","Hongdae","Myeongdong","Itaewon"]),
-    "bangkok":(13.7563,100.5018,"TH",["Sukhumvit","Silom","Rattanakosin","Chatuchak"]),
-    "singapore":(1.3521,103.8198,"SG",["Marina Bay","Clarke Quay","Orchard","Chinatown"]),
-    "paris":(48.8566,2.3522,"FR",["Le Marais","Montmartre","Saint-Germain","Bastille"]),
-    "london":(51.5072,-0.1276,"GB",["Soho","Covent Garden","Shoreditch","South Bank"]),
-    "rome":(41.9028,12.4964,"IT",["Trastevere","Prati","Vatican","Campo de Fiori"]),
-    "barcelona":(41.3851,2.1734,"ES",["Gothic Quarter","Eixample","Gracia","El Born"]),
-    "new york":(40.7128,-74.0060,"US",["Manhattan","Brooklyn","SoHo","Midtown"]),
-    "new york city":(40.7128,-74.0060,"US",["Manhattan","Brooklyn","SoHo","Midtown"]),
-    "sydney":(-33.8688,151.2093,"AU",["Circular Quay","Surry Hills","Newtown","Bondi"]),
-    "dubai":(25.2048,55.2708,"AE",["Downtown","Dubai Marina","Deira","JBR"]),
-    "amsterdam":(52.3676,4.9041,"NL",["Jordaan","De Pijp","Centrum","Oost"]),
-    "istanbul":(41.0082,28.9784,"TR",["Beyoglu","Sultanahmet","Besiktas","Kadikoy"]),
-    "hong kong":(22.3193,114.1694,"HK",["Central","Tsim Sha Tsui","Mong Kok","Causeway Bay"]),
-    "taipei":(25.0330,121.5654,"TW",["Daan","Xinyi","Zhongzheng","Shilin"]),
-    "bali":(-8.3405,115.0920,"ID",["Seminyak","Ubud","Canggu","Kuta"]),
-    "ho chi minh city":(10.7769,106.7009,"VN",["District 1","District 3","Bui Vien"]),
-    "kuala lumpur":(3.1390,101.6869,"MY",["KLCC","Bukit Bintang","Bangsar","Chow Kit"]),
-}
-PTYPES={
-    "🏛️ Attraction":{"cn":"jingdian","osm":("tourism","attraction"),"amap":"110000","color":"#8b5cf6"},
-    "🍜 Restaurant": {"cn":"canting",  "osm":("amenity","restaurant"), "amap":"050000","color":"#f59e0b"},
-    "☕ Cafe":        {"cn":"kafei",    "osm":("amenity","cafe"),        "amap":"050500","color":"#a78bfa"},
-    "🌿 Park":        {"cn":"gongyuan","osm":("leisure","park"),        "amap":"110101","color":"#34d399"},
-    "🛍️ Shopping":   {"cn":"gouwu",   "osm":("shop","mall"),           "amap":"060000","color":"#f472b6"},
-    "🍺 Bar/Nightlife":{"cn":"jiuba",  "osm":("amenity","bar"),         "amap":"050600","color":"#fb923c"},
-    "🏨 Hotel":       {"cn":"jiudian", "osm":("tourism","hotel"),       "amap":"100000","color":"#38bdf8"},
-}
-AMAP_KW={
-    "🏛️ Attraction":["旅游景点","博物馆","历史景区"],
-    "🍜 Restaurant": ["餐馆","美食","特色菜"],
-    "☕ Cafe":        ["咖啡","下午茶"],
-    "🌿 Park":        ["公园","花园","广场"],
-    "🛍️ Shopping":   ["商场","购物中心"],
-    "🍺 Bar/Nightlife":["酒吧","夜店"],
-    "🏨 Hotel":       ["酒店","宾馆"],
-}
-DAY_COLORS=["#8b5cf6","#f59e0b","#34d399","#f472b6","#fb923c","#38bdf8","#a78bfa","#6ee7b7"]
-
-WORLD_CITIES={
-    "China":["Beijing","Shanghai","Guangzhou","Shenzhen","Chengdu","Hangzhou",
-             "Xi'an","Chongqing","Nanjing","Wuhan","Suzhou","Tianjin",
-             "Qingdao","Xiamen","Kunming","Sanya","Changsha","Zhengzhou"],
-    "Japan":["Tokyo","Osaka","Kyoto","Sapporo","Fukuoka","Nagoya","Hiroshima","Nara"],
-    "South Korea":["Seoul","Busan","Incheon","Jeju","Daegu"],
-    "Thailand":["Bangkok","Chiang Mai","Phuket","Pattaya","Koh Samui"],
-    "Vietnam":["Ho Chi Minh City","Hanoi","Da Nang","Hoi An","Nha Trang"],
-    "Indonesia":["Bali","Jakarta","Yogyakarta","Lombok"],
-    "Malaysia":["Kuala Lumpur","Penang","Malacca","Langkawi"],
-    "Singapore":["Singapore"],
-    "Philippines":["Manila","Cebu","Boracay","Palawan"],
-    "India":["Mumbai","Delhi","Bangalore","Jaipur","Goa","Agra","Chennai"],
-    "UAE":["Dubai","Abu Dhabi","Sharjah"],
-    "Turkey":["Istanbul","Cappadocia","Antalya","Bodrum","Pamukkale"],
-    "France":["Paris","Lyon","Nice","Bordeaux","Strasbourg"],
-    "Italy":["Rome","Milan","Florence","Venice","Naples","Amalfi"],
-    "Spain":["Barcelona","Madrid","Seville","Valencia","Granada","Bilbao"],
-    "United Kingdom":["London","Edinburgh","Manchester","Bath","Cambridge","Oxford"],
-    "Germany":["Berlin","Munich","Hamburg","Frankfurt","Cologne","Dresden"],
-    "Netherlands":["Amsterdam","Rotterdam","Utrecht"],
-    "Switzerland":["Zurich","Geneva","Lucerne","Interlaken","Zermatt"],
-    "Austria":["Vienna","Salzburg","Innsbruck","Hallstatt"],
-    "Greece":["Athens","Santorini","Mykonos","Crete","Rhodes"],
-    "Portugal":["Lisbon","Porto","Algarve","Sintra"],
-    "Czech Republic":["Prague","Brno","Cesky Krumlov"],
-    "Hungary":["Budapest"],
-    "Poland":["Warsaw","Krakow","Wroclaw","Gdansk"],
-    "Croatia":["Dubrovnik","Split","Zagreb","Hvar"],
-    "Norway":["Oslo","Bergen","Tromso","Lofoten Islands"],
-    "Sweden":["Stockholm","Gothenburg","Kiruna"],
-    "Denmark":["Copenhagen","Aarhus"],
-    "Finland":["Helsinki","Rovaniemi"],
-    "Iceland":["Reykjavik","Akureyri"],
-    "Russia":["Moscow","St. Petersburg","Vladivostok"],
-    "USA":["New York","Los Angeles","Chicago","San Francisco","Miami","Boston",
-           "Seattle","Las Vegas","Washington DC","Nashville"],
-    "Canada":["Toronto","Vancouver","Montreal","Banff","Quebec City"],
-    "Mexico":["Mexico City","Cancun","Playa del Carmen","Oaxaca"],
-    "Brazil":["Rio de Janeiro","Sao Paulo","Salvador","Iguazu Falls"],
-    "Argentina":["Buenos Aires","Patagonia","Mendoza","Bariloche"],
-    "Peru":["Lima","Cusco","Machu Picchu","Arequipa"],
-    "Colombia":["Bogota","Cartagena","Medellin"],
-    "Australia":["Sydney","Melbourne","Brisbane","Perth","Cairns","Gold Coast"],
-    "New Zealand":["Auckland","Queenstown","Wellington","Rotorua"],
-    "Morocco":["Marrakech","Fes","Casablanca","Chefchaouen"],
-    "Egypt":["Cairo","Luxor","Aswan","Alexandria"],
-    "South Africa":["Cape Town","Johannesburg","Durban","Kruger"],
-    "Kenya":["Nairobi","Mombasa","Masai Mara"],
-    "Hong Kong":["Hong Kong"],
-    "Taiwan":["Taipei","Tainan","Kaohsiung","Taichung","Hualien"],
-}
-COUNTRY_CODES={
-    "China":"CN","Japan":"JP","South Korea":"KR","Thailand":"TH","Vietnam":"VN",
-    "Indonesia":"ID","Malaysia":"MY","Singapore":"SG","Philippines":"PH","India":"IN",
-    "UAE":"AE","Turkey":"TR","France":"FR","Italy":"IT","Spain":"ES",
-    "United Kingdom":"GB","Germany":"DE","Netherlands":"NL","Switzerland":"CH",
-    "Austria":"AT","Greece":"GR","Portugal":"PT","Czech Republic":"CZ",
-    "Hungary":"HU","Poland":"PL","Croatia":"HR","Norway":"NO","Sweden":"SE",
-    "Denmark":"DK","Finland":"FI","Iceland":"IS","Russia":"RU",
-    "USA":"US","Canada":"CA","Mexico":"MX","Brazil":"BR","Argentina":"AR",
-    "Peru":"PE","Colombia":"CO","Australia":"AU","New Zealand":"NZ",
-    "Morocco":"MA","Egypt":"EG","South Africa":"ZA","Kenya":"KE",
-    "Hong Kong":"HK","Taiwan":"TW",
 }
 
-def _ss(s):
-    if s is None: return ""
-    s=str(s)
-    for o,n in {"\u2014":"-","\u2013":"-","\u2019":"'","\u2018":"'",
-                "\u201c":'"',"\u201d":'"',"\u2026":"..."}.items():
-        s=s.replace(o,n)
-    return s
+AMAP_KW = {
+    "🏛️ Attraction":["旅游景点","博物馆"], "🍜 Restaurant":["餐馆","美食"],
+    "☕ Cafe":["咖啡","下午茶"], "🌿 Park":["公园","花园"],
+    "🛍️ Shopping":["商场","购物中心"], "🍺 Bar/Nightlife":["酒吧","夜店"],
+    "🏨 Hotel":["酒店","宾馆"],
+}
 
-def _hav(la1,lo1,la2,lo2):
-    R=6371000; dl=math.radians(la2-la1); dg=math.radians(lo2-lo1)
-    a=math.sin(dl/2)**2+math.cos(math.radians(la1))*math.cos(math.radians(la2))*math.sin(dg/2)**2
-    return R*2*math.asin(math.sqrt(min(1.,a)))
+CURRENCIES = {
+    "CN":[("USD","$",1.0),("CNY","¥",7.25)],
+    "JP":[("USD","$",1.0),("JPY","¥",155)],
+    "KR":[("USD","$",1.0),("KRW","₩",1350)],
+    "TH":[("USD","$",1.0),("THB","฿",36)],
+    "SG":[("USD","$",1.0),("SGD","S$",1.35)],
+    "FR":[("USD","$",1.0),("EUR","€",0.92)],
+    "GB":[("USD","$",1.0),("GBP","£",0.79)],
+    "IT":[("USD","$",1.0),("EUR","€",0.92)],
+    "ES":[("USD","$",1.0),("EUR","€",0.92)],
+    "US":[("USD","$",1.0)],
+    "AU":[("USD","$",1.0),("AUD","A$",1.53)],
+    "AE":[("USD","$",1.0),("AED","AED ",3.67)],
+    "NL":[("USD","$",1.0),("EUR","€",0.92)],
+    "TR":[("USD","$",1.0),("TRY","₺",32)],
+    "HK":[("USD","$",1.0),("HKD","HK$",7.82)],
+    "TW":[("USD","$",1.0),("TWD","NT$",32)],
+    "INT":[("USD","$",1.0)],
+}
+def _local_rate(country):
+    p = CURRENCIES.get(country,[("USD","$",1.0)])
+    return (p[1][1],p[1][2]) if len(p)>1 else ("$",1.0)
 
-def geo_dedup(places,r=120.):
+COST_W  = {"🏛️ Attraction":0.18,"🍜 Restaurant":0.25,"☕ Cafe":0.10,
+           "🌿 Park":0.04,"🛍️ Shopping":0.22,"🍺 Bar/Nightlife":0.16,"🏨 Hotel":0.00}
+COST_FL = {"🏛️ Attraction":4,"🍜 Restaurant":6,"☕ Cafe":3,
+           "🌿 Park":0,"🛍️ Shopping":8,"🍺 Bar/Nightlife":5,"🏨 Hotel":0}
+
+def cost_est(tl, daily_usd, country):
+    w = COST_W.get(tl,.12); fl = COST_FL.get(tl,2)
+    pv = max(fl,daily_usd*w/2); lo = pv*.65; hi = pv*1.45
+    sym, rate = _local_rate(country)
+    if country=="US": return (lo+hi)/2, f"${round(lo)}-${round(hi)}"
+    return (lo+hi)/2, f"${round(lo)}-${round(hi)} ({sym}{round(lo*rate)}-{sym}{round(hi*rate)})"
+
+def geo_dedup(places, r=120.):
     if not places: return []
     merged=[False]*len(places); kept=[]
     for i,p in enumerate(places):
@@ -819,306 +836,86 @@ def geo_dedup(places,r=120.):
     return kept
 
 def tdesc(s):
-    D={"attraction":"Worth a visit","景点":"Worth a visit",
-       "restaurant":"Great for a meal","餐":"Great for a meal",
-       "cafe":"Perfect coffee stop","咖":"Perfect coffee stop",
-       "park":"Relax outdoors","公园":"Relax outdoors",
-       "mall":"Shopping stop","购物":"Shopping stop",
-       "bar":"Evening out","酒吧":"Evening out",
-       "hotel":"Place to stay","酒店":"Place to stay"}
+    D={"attraction":"Worth a visit","restaurant":"Great for a meal","cafe":"Perfect coffee stop",
+       "park":"Relax outdoors","mall":"Shopping stop","bar":"Evening out","hotel":"Place to stay"}
     for k,v in D.items():
         if k in str(s).lower(): return v
     return "Local favourite"
 
-CHAIN_BL=["kfc","mcdonald","starbucks","seven-eleven","family mart","711","lawson","costa coffee"]
-def is_chain(n): return any(k in n.lower() for k in CHAIN_BL)
+# ══════════════════════════════════════════════════════════════════
+# SESSION STATE INIT
+# ══════════════════════════════════════════════════════════════════
+DEFAULTS = {
+    "step": 1,
+    "user_mode": None,   # "guest" or "logged_in"
+    "_auth_token": "",
+    "dest_country": "",
+    "dest_city": "",
+    "dest_lat": None,
+    "dest_lon": None,
+    "dest_country_code": "INT",
+    "trip_days": 3,
+    "trip_types": ["🏛️ Attraction","🍜 Restaurant"],
+    "trip_budget": 80,
+    "trip_quotas": None,
+    "day_budgets": None,
+    "_itin": None,
+    "_df": None,
+    "seed": 42,
+    "expanded_day": None,
+    "generating": False,
+}
+for k, v in DEFAULTS.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ══════════════════════════════════════════════════════════════════
-# AI MUST-SEE
+# AUTH HELPERS
 # ══════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_ai_mustsee(city:str, country:str, days:int, types_t:tuple, lang:str="EN") -> list:
-    types=list(types_t)
-    if DEEPSEEK_KEY:
-        try:
-            t_str=", ".join(types[:5])
-            prompt=(
-                f"Recommend {min(days*3,12)} must-visit famous places in {city} "
-                f"for a {days}-day trip. Types: {t_str}. "
-                f"Only real well-known landmarks. "
-                f"Return JSON array only. Each item: "
-                f"name (English), name_local (local script), type, "
-                f"why (max 10 words), tip (max 10 words), "
-                f"rating (4.0-5.0), lat (number), lon (number), "
-                f"duration_min (suggested visit time in minutes, integer)."
-            )
-            if lang=="ZH":
-                prompt=(
-                    f"为{city}{days}天行程推荐{min(days*3,12)}个必去著名地点，类型：{t_str}。"
-                    f"只推荐真实存在的知名地点。"
-                    f"仅返回JSON数组，每项：name(英文名), name_local(中文名), type, "
-                    f"why(英文,10词内), tip(英文,10词内), "
-                    f"rating(4.0-5.0), lat(数字), lon(数字), duration_min(建议游览分钟数,整数)。"
-                )
-            resp=requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                headers={"Authorization":f"Bearer {DEEPSEEK_KEY}","Content-Type":"application/json"},
-                json={"model":"deepseek-chat",
-                      "messages":[{"role":"user","content":prompt}],
-                      "temperature":0.3,"max_tokens":1400},
-                timeout=20,
-            )
-            if resp.status_code==200:
-                content=resp.json()["choices"][0]["message"]["content"].strip()
-                m=re.search(r'\[.*\]',content,re.DOTALL)
-                if m:
-                    items=json.loads(m.group())
-                    if isinstance(items,list) and items:
-                        cleaned=[]
-                        for it in items[:12]:
-                            if not isinstance(it,dict): continue
-                            cleaned.append({
-                                "name":      _ss(it.get("name","")),
-                                "name_local":_ss(it.get("name_local","")),
-                                "type":      _ss(it.get("type","🏛️ Attraction")),
-                                "why":       _ss(it.get("why","")),
-                                "tip":       _ss(it.get("tip","")),
-                                "rating":    float(it.get("rating",4.5)),
-                                "lat":       float(it.get("lat",0)),
-                                "lon":       float(it.get("lon",0)),
-                                "duration_min": int(it.get("duration_min",60)),
-                            })
-                        if cleaned: return cleaned
-        except Exception: pass
-
-    BUILTIN={
-        "tokyo":[
-            {"name":"Senso-ji Temple","name_local":"浅草寺","type":"🏛️ Attraction",
-             "why":"Tokyo oldest temple","tip":"Visit at 6am","rating":4.9,
-             "lat":35.7148,"lon":139.7967,"duration_min":60},
-            {"name":"Shibuya Crossing","name_local":"涩谷十字路口","type":"🏛️ Attraction",
-             "why":"World busiest crossing","tip":"Watch from Starbucks above","rating":4.8,
-             "lat":35.6595,"lon":139.7004,"duration_min":20},
-            {"name":"Shinjuku Gyoen","name_local":"新宿御苑","type":"🌿 Park",
-             "why":"Beautiful imperial garden","tip":"April for cherry blossoms","rating":4.8,
-             "lat":35.6851,"lon":139.7103,"duration_min":90},
-            {"name":"Tsukiji Outer Market","name_local":"筑地外市场","type":"🍜 Restaurant",
-             "why":"Freshest sushi breakfast","tip":"Arrive before 9am","rating":4.7,
-             "lat":35.6654,"lon":139.7707,"duration_min":60},
-        ],
-        "paris":[
-            {"name":"Eiffel Tower","name_local":"埃菲尔铁塔","type":"🏛️ Attraction",
-             "why":"Iconic symbol of Paris","tip":"Book summit tickets ahead","rating":4.8,
-             "lat":48.8584,"lon":2.2945,"duration_min":90},
-            {"name":"Louvre Museum","name_local":"卢浮宫","type":"🏛️ Attraction",
-             "why":"World largest art museum","tip":"Wednesday evening less crowded","rating":4.8,
-             "lat":48.8606,"lon":2.3376,"duration_min":180},
-            {"name":"Montmartre","name_local":"蒙马特","type":"🏛️ Attraction",
-             "why":"Charming hilltop artist village","tip":"Morning for fewer tourists","rating":4.7,
-             "lat":48.8867,"lon":2.3431,"duration_min":90},
-        ],
-        "london":[
-            {"name":"British Museum","name_local":"大英博物馆","type":"🏛️ Attraction",
-             "why":"Free world class museum","tip":"Free entry, book timed slot","rating":4.8,
-             "lat":51.5194,"lon":-0.1270,"duration_min":120},
-            {"name":"Tower of London","name_local":"伦敦塔","type":"🏛️ Attraction",
-             "why":"900 years of royal history","tip":"Buy tickets online","rating":4.7,
-             "lat":51.5081,"lon":-0.0759,"duration_min":90},
-            {"name":"Borough Market","name_local":"波罗市场","type":"🍜 Restaurant",
-             "why":"London best food market","tip":"Thursday to Saturday only","rating":4.8,
-             "lat":51.5055,"lon":-0.0910,"duration_min":60},
-        ],
-        "beijing":[
-            {"name":"Forbidden City","name_local":"故宫","type":"🏛️ Attraction",
-             "why":"World largest palace complex","tip":"Book online, sell out fast","rating":4.9,
-             "lat":39.9163,"lon":116.3972,"duration_min":180},
-            {"name":"Great Wall Mutianyu","name_local":"慕田峪长城","type":"🏛️ Attraction",
-             "why":"Best restored Great Wall section","tip":"Cable car up, toboggan down","rating":4.9,
-             "lat":40.4319,"lon":116.5651,"duration_min":180},
-            {"name":"Temple of Heaven","name_local":"天坛","type":"🏛️ Attraction",
-             "why":"Ming dynasty ceremonial park","tip":"Early morning for tai chi","rating":4.8,
-             "lat":39.8822,"lon":116.4066,"duration_min":90},
-        ],
-        "singapore":[
-            {"name":"Marina Bay Sands SkyPark","name_local":"滨海湾金沙空中花园","type":"🏛️ Attraction",
-             "why":"Iconic skyline views","tip":"Sunset is best time","rating":4.8,
-             "lat":1.2834,"lon":103.8607,"duration_min":60},
-            {"name":"Gardens by the Bay","name_local":"滨海湾花园","type":"🌿 Park",
-             "why":"Futuristic Supertree Grove","tip":"Free outdoor, paid conservatories","rating":4.9,
-             "lat":1.2816,"lon":103.8636,"duration_min":120},
-            {"name":"Maxwell Hawker Centre","name_local":"麦士威熟食中心","type":"🍜 Restaurant",
-             "why":"Legendary Hainanese chicken rice","tip":"Tian Tian stall, queue early","rating":4.8,
-             "lat":1.2800,"lon":103.8444,"duration_min":45},
-        ],
-        "dubai":[
-            {"name":"Burj Khalifa","name_local":"哈利法塔","type":"🏛️ Attraction",
-             "why":"World tallest building views","tip":"Book At the Top online","rating":4.8,
-             "lat":25.1972,"lon":55.2744,"duration_min":90},
-            {"name":"Dubai Museum","name_local":"迪拜博物馆","type":"🏛️ Attraction",
-             "why":"History in an old fort","tip":"Only AED 3 entry fee","rating":4.5,
-             "lat":25.2637,"lon":55.2972,"duration_min":60},
-        ],
-    }
-    city_lc=city.strip().lower()
-    for k,v in BUILTIN.items():
-        if k in city_lc: return v
-    return []
-
-
-def get_day_picks(city,country,day_idx,days,types,lang="EN"):
-    all_r=get_ai_mustsee(city,country,days,tuple(types),lang)
-    if not all_r: return []
-    n=len(all_r); start=(day_idx*3)%n
-    return [all_r[(start+i)%n] for i in range(min(3,n))]
+def _cur_user():
+    if not AUTH_OK: return None
+    try:
+        tok = st.session_state.get("_auth_token","")
+        if not tok: return None
+        return get_user_from_session(tok)
+    except Exception: return None
 
 # ══════════════════════════════════════════════════════════════════
 # GEOCODING
 # ══════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=3600,show_spinner=False)
-def _amap_districts(city):
-    if not city.strip() or not AMAP_KEY: return []
-    try:
-        r=requests.get("https://restapi.amap.com/v3/config/district",
-                       params={"key":AMAP_KEY,"keywords":city,"subdistrict":1,
-                               "extensions":"base","output":"json"},timeout=9).json()
-        if str(r.get("status"))!="1" or not r.get("districts"): return []
-        out=[]
-        for d in r["districts"][0].get("districts",[]):
-            n=(d.get("name") or "").strip(); a=(d.get("adcode") or "").strip()
-            c=(d.get("center") or "").strip()
-            if not (n and a): continue
-            lat=lon=None
-            if "," in c:
-                try: lon,lat=map(float,c.split(","))
-                except Exception: pass
-            out.append({"name":n,"adcode":a,"lat":lat,"lon":lon})
-        return out
-    except Exception: return []
-
-@st.cache_data(ttl=3600,show_spinner=False)
-def _amap_geo(addr):
-    if not AMAP_KEY: return None
-    try:
-        r=requests.get("https://restapi.amap.com/v3/geocode/geo",
-                       params={"key":AMAP_KEY,"address":addr,"output":"json"},timeout=8).json()
-        if str(r.get("status"))=="1" and r.get("geocodes"):
-            loc=r["geocodes"][0].get("location","")
-            if "," in loc:
-                lon,lat=map(float,loc.split(","))
-                return lat,lon
-    except Exception: pass
-    return None
-
-@st.cache_data(ttl=3600,show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _nom(q):
     try:
-        r=requests.get("https://nominatim.openstreetmap.org/search",
-                       params={"q":q,"format":"json","limit":1},
-                       headers={"User-Agent":"TravelPlannerPro/15"},timeout=9).json()
+        r = requests.get("https://nominatim.openstreetmap.org/search",
+                         params={"q":q,"format":"json","limit":1},
+                         headers={"User-Agent":"VoyagerTravelApp/1.0"},timeout=9).json()
         if r: return float(r[0]["lat"]),float(r[0]["lon"])
     except Exception: pass
     return None
 
-def _geocode(addr,city,is_cn):
-    if not addr.strip(): return None
-    if is_cn: return _amap_geo(f"{addr} {city}") or _nom(f"{addr} {city}")
-    return _nom(f"{addr} {city}") or _nom(addr)
-
-@st.cache_data(ttl=3600,show_spinner=False)
-def _nom_districts(city):
-    if not city.strip(): return []
+@st.cache_data(ttl=3600, show_spinner=False)
+def _amap_geo(addr):
+    if not AMAP_KEY: return None
     try:
-        r=requests.get("https://nominatim.openstreetmap.org/search",
-                       params={"q":city,"format":"json","limit":1},
-                       headers={"User-Agent":"TravelPlannerPro/15"},timeout=8).json()
-        if not r: return []
-        lat,lon=float(r[0]["lat"]),float(r[0]["lon"])
-        q=(f'[out:json][timeout:20];'
-           f'(relation["place"~"suburb|neighbourhood|quarter|district"](around:20000,{lat},{lon});'
-           f'node["place"~"suburb|neighbourhood|quarter"](around:20000,{lat},{lon}););out tags 30;')
-        els=[]
-        for url in ["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"]:
-            try:
-                els=requests.post(url,data={"data":q},timeout=18).json().get("elements",[])
-                if els: break
-            except Exception: continue
-        names=[]
-        for el in els:
-            n=el.get("tags",{}).get("name:en") or el.get("tags",{}).get("name","")
-            if n and n not in names and len(n)>1: names.append(n)
-        return sorted(names[:20])
-    except Exception: return []
+        r = requests.get("https://restapi.amap.com/v3/geocode/geo",
+                         params={"key":AMAP_KEY,"address":addr,"output":"json"},timeout=8).json()
+        if str(r.get("status"))=="1" and r.get("geocodes"):
+            loc = r["geocodes"][0].get("location","")
+            if "," in loc:
+                lon,lat = map(float,loc.split(","))
+                return lat,lon
+    except Exception: pass
+    return None
 
 # ══════════════════════════════════════════════════════════════════
 # PLACE SEARCH
 # ══════════════════════════════════════════════════════════════════
-def _parse_amap(pois,kw,tl,limit,seen):
-    out=[]
-    for p in pois:
-        if len(out)+len(seen)>=limit: break
-        nm=p.get("name","")
-        if not nm or is_chain(nm): continue
-        loc=p.get("location","")
-        if "," not in (loc or ""): continue
-        try: plon,plat=map(float,loc.split(","))
-        except Exception: continue
-        k=(nm,round(plat,4),round(plon,4))
-        if k in seen: continue
-        seen.add(k)
-        biz=p.get("biz_ext") or {}
-        try: rating=float(biz.get("rating") or 0) or 0.0
-        except Exception: rating=0.0
-        tel=biz.get("tel") or p.get("tel") or ""
-        if isinstance(tel,list): tel="; ".join(t for t in tel if t)
-        addr=p.get("address") or ""
-        if isinstance(addr,list): addr="".join(addr)
-        out.append({"name":_ss(nm),"lat":plat,"lon":plon,"rating":rating,
-                    "address":_ss(str(addr).strip()),"phone":_ss(str(tel).strip()),
-                    "website":"","type":kw,"type_label":tl,
-                    "district":_ss(p.get("adname") or ""),"description":tdesc(kw)})
-    return out
-
-def search_cn(lat,lon,tls,lpt,adcode=""):
-    all_p=[]; errs=[]
-    for tl in tls:
-        for kw in AMAP_KW.get(tl,[])[:2]:
-            try:
-                if adcode:
-                    p={"key":AMAP_KEY,"keywords":kw,"city":adcode,"citylimit":"true",
-                       "offset":20,"page":1,"extensions":"all","output":"json"}
-                    at=PTYPES.get(tl,{}).get("amap","")
-                    if at: p["types"]=at
-                    d=requests.get("https://restapi.amap.com/v3/place/text",params=p,timeout=10).json()
-                else:
-                    p={"key":AMAP_KEY,"keywords":kw,"location":f"{lon},{lat}","radius":8000,
-                       "offset":20,"page":1,"extensions":"all","output":"json"}
-                    at=PTYPES.get(tl,{}).get("amap","")
-                    if at: p["types"]=at
-                    d=requests.get("https://restapi.amap.com/v3/place/around",params=p,timeout=10).json()
-                seen=set()
-                if str(d.get("status"))=="1":
-                    all_p.extend(_parse_amap(d.get("pois") or [],kw,tl,lpt,seen))
-            except Exception as e: errs.append(str(e))
-    seen2,out=set(),[]
-    for p in all_p:
-        k=(p["name"],round(p["lat"],4),round(p["lon"],4))
-        if k not in seen2: seen2.add(k); out.append(p)
-    return out,errs
-
-def search_intl(lat,lon,tls,lpt,district=""):
+def search_intl(lat,lon,tls,lpt):
     all_p=[]
     for tl in tls:
-        ok,ov=PTYPES[tl]["osm"]
-        clat,clon=lat,lon
-        if district:
-            try:
-                g=requests.get("https://nominatim.openstreetmap.org/search",
-                               params={"q":district,"format":"json","limit":1},
-                               headers={"User-Agent":"TravelPlannerPro/15"},timeout=5).json()
-                if g: clat,clon=float(g[0]["lat"]),float(g[0]["lon"])
-            except Exception: pass
-        q=(f'[out:json][timeout:30];(node["{ok}"="{ov}"](around:5000,{clat},{clon});'
-           f'way["{ok}"="{ov}"](around:5000,{clat},{clon}););out center {lpt*3};')
+        ok,ov = PTYPES[tl]["osm"]
+        q=(f'[out:json][timeout:30];(node["{ok}"="{ov}"](around:6000,{lat},{lon});'
+           f'way["{ok}"="{ov}"](around:6000,{lat},{lon}););out center {lpt*3};')
         els=[]
         for url in ["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"]:
             try:
@@ -1132,7 +929,7 @@ def search_intl(lat,lon,tls,lpt,district=""):
             elat=el.get("lat",0) if el["type"]=="node" else el.get("center",{}).get("lat",0)
             elon=el.get("lon",0) if el["type"]=="node" else el.get("center",{}).get("lon",0)
             if not elat or not elon: continue
-            pts=[tags.get(k,"") for k in ["addr:housenumber","addr:street","addr:suburb","addr:city"] if tags.get(k)]
+            pts=[tags.get(k,"") for k in ["addr:housenumber","addr:street","addr:city"] if tags.get(k)]
             all_p.append({"name":_ss(nm),"lat":elat,"lon":elon,
                           "rating":round(random.uniform(3.8,5.0),1),
                           "address":_ss(", ".join(pts)),"phone":_ss(tags.get("phone","")),
@@ -1145,16 +942,58 @@ def search_intl(lat,lon,tls,lpt,district=""):
         if k not in seen: seen.add(k); out.append(p)
     return out
 
+def _parse_amap(pois,kw,tl,limit,seen):
+    out=[]
+    for p in pois:
+        if len(out)>=limit: break
+        nm=p.get("name","")
+        if not nm or is_chain(nm): continue
+        loc=p.get("location","")
+        if "," not in (loc or ""): continue
+        try: plon,plat=map(float,loc.split(","))
+        except Exception: continue
+        k=(nm,round(plat,4),round(plon,4))
+        if k in seen: continue
+        seen.add(k)
+        biz=p.get("biz_ext") or {}
+        try: rating=float(biz.get("rating") or 0) or 0.0
+        except Exception: rating=0.0
+        addr=p.get("address") or ""
+        if isinstance(addr,list): addr="".join(addr)
+        out.append({"name":_ss(nm),"lat":plat,"lon":plon,"rating":rating,
+                    "address":_ss(str(addr).strip()),"phone":"","website":"",
+                    "type":kw,"type_label":tl,"district":"","description":tdesc(kw)})
+    return out
+
+def search_cn(lat,lon,tls,lpt):
+    all_p=[]; seen=set()
+    for tl in tls:
+        for kw in AMAP_KW.get(tl,[])[:2]:
+            try:
+                p={"key":AMAP_KEY,"keywords":kw,"location":f"{lon},{lat}","radius":8000,
+                   "offset":20,"page":1,"extensions":"all","output":"json"}
+                at=PTYPES.get(tl,{}).get("amap","")
+                if at: p["types"]=at
+                d=requests.get("https://restapi.amap.com/v3/place/around",params=p,timeout=10).json()
+                if str(d.get("status"))=="1":
+                    all_p.extend(_parse_amap(d.get("pois") or [],kw,tl,lpt,seen))
+            except Exception: pass
+    seen2,out=set(),[]
+    for p in all_p:
+        k=(p["name"],round(p["lat"],4),round(p["lon"],4))
+        if k not in seen2: seen2.add(k); out.append(p)
+    return out
+
 def demo_places(lat,lon,tls,n,seed):
     random.seed(seed)
     NAMES={
-        "🏛️ Attraction":["Grand Museum","Sky Tower","Ancient Temple","Art Gallery","Historic Castle","Night Market"],
-        "🍜 Restaurant": ["Sakura Dining","Ramen House","Sushi Master","Street Food Alley","Harbour Grill","Noodle King"],
-        "☕ Cafe":        ["Blue Bottle","Artisan Brew","Matcha Corner","Morning Pour","The Cozy Cup"],
-        "🌿 Park":        ["Riverside Park","Sakura Garden","Central Park","Bamboo Grove"],
-        "🛍️ Shopping":   ["Central Mall","Night Bazaar","Vintage Market","Designer District"],
-        "🍺 Bar/Nightlife":["Rooftop Bar","Jazz Lounge","Craft Beer Hall","Cocktail Garden"],
-        "🏨 Hotel":       ["Grand Palace Hotel","Boutique Inn","City View Hotel"],
+        "🏛️ Attraction":["Grand Museum","Sky Tower","Ancient Temple","Art Gallery","Historic Castle","Night Market","Cultural Centre","Heritage Site"],
+        "🍜 Restaurant":["Sakura Dining","Ramen House","Sushi Master","Street Food Alley","Harbour Grill","Noodle King","Garden Restaurant"],
+        "☕ Cafe":["Blue Bottle","Artisan Brew","Matcha Corner","Morning Pour","The Cozy Cup","Rooftop Café"],
+        "🌿 Park":["Riverside Park","Sakura Garden","Central Park","Bamboo Grove","Waterfront Green"],
+        "🛍️ Shopping":["Central Mall","Night Bazaar","Vintage Market","Designer District","Night Market"],
+        "🍺 Bar/Nightlife":["Rooftop Bar","Jazz Lounge","Craft Beer Hall","Cocktail Garden","Speakeasy"],
+        "🏨 Hotel":["Grand Palace Hotel","Boutique Inn","City View Hotel","Heritage Mansion"],
     }
     centers=[(lat+random.uniform(-.02,.02),lon+random.uniform(-.02,.02)) for _ in range(3)]
     out=[]
@@ -1166,153 +1005,143 @@ def demo_places(lat,lon,tls,n,seed):
                         "lon":round(clon+random.uniform(-.005,.005),5),
                         "rating":round(random.uniform(4.0,4.9),1),
                         "address":"Sample data","phone":"","website":"",
-                        "type":tl,"type_label":tl,
-                        "district":["North","Central","South"][ci],"description":tdesc(tl)})
+                        "type":tl,"type_label":tl,"district":["North","Central","South"][ci],
+                        "description":tdesc(tl)})
     return out
 
-@st.cache_data(ttl=180,show_spinner=False)
-def fetch_places(clat,clon,country,is_cn,tls_t,lpt,
-                 adcodes_t,dnames_t,alats_t,alons_t,_seed):
-    random.seed(_seed); tls=list(tls_t); all_raw=[]; warn=None; seen_k=set()
-    for i in range(len(adcodes_t)):
-        adc=adcodes_t[i]; dn=dnames_t[i]
-        dlat=alats_t[i] if alats_t[i] is not None else clat
-        dlon=alons_t[i] if alons_t[i] is not None else clon
-        ck=adc or f"{round(dlat,3)},{round(dlon,3)}"
-        if ck in seen_k: continue
-        seen_k.add(ck)
-        if is_cn:
-            ps,_=search_cn(dlat,dlon,tls,lpt,adc)
-        else:
-            ps=search_intl(dlat,dlon,tls,lpt,dn)
-        all_raw.extend(ps)
-    seen,out=set(),[]
-    for p in all_raw:
-        k=(p["name"],round(p["lat"],4),round(p["lon"],4))
-        if k not in seen: seen.add(k); out.append(p)
-    out=geo_dedup(out)
-    if not out:
-        out=demo_places(clat,clon,tls,lpt,_seed)
-        warn=("Amap API unavailable - showing sample data." if is_cn
-              else "Live data unavailable - showing sample places.")
-    df=pd.DataFrame(out)
+@st.cache_data(ttl=180, show_spinner=False)
+def fetch_places(clat,clon,country,is_cn,tls_t,lpt,_seed):
+    random.seed(_seed); tls=list(tls_t)
+    if is_cn:
+        raw=search_cn(clat,clon,tls,lpt)
+    else:
+        raw=search_intl(clat,clon,tls,lpt)
+    raw=geo_dedup(raw)
+    warn=None
+    if not raw:
+        raw=demo_places(clat,clon,tls,lpt,_seed)
+        warn="Live data unavailable — showing curated sample places."
+    df=pd.DataFrame(raw)
     for c in ["address","phone","website","type","type_label","district","description"]:
         if c not in df.columns: df[c]=""
     df["rating"]=pd.to_numeric(df["rating"],errors="coerce").fillna(0.)
-    for c in ["name","address","phone","district","description","type_label","type"]:
+    for c in ["name","address","district","description","type_label","type"]:
         df[c]=df[c].apply(_ss)
-    return df.sort_values("rating",ascending=False).reset_index(drop=True),warn
+    return df.sort_values("rating",ascending=False).reset_index(drop=True), warn
 
 # ══════════════════════════════════════════════════════════════════
-# AUTH
+# WISHLIST HELPERS
 # ══════════════════════════════════════════════════════════════════
-def _cur_user():
-    if not AUTH_OK: return None
-    try:
-        tok=st.session_state.get("_auth_token","")
-        if not tok: return None
-        return get_user_from_session(tok)
-    except Exception: return None
+def wl_key(u): return f"_wl_{u}"
+def wl_add(username,place):
+    if WISHLIST_EXT:
+        try: _wl_add(username,place); return
+        except Exception: pass
+    k=wl_key(username); lst=st.session_state.get(k,[])
+    if place.get("name","") not in {p.get("name","") for p in lst}:
+        lst.append(place); st.session_state[k]=lst
 
-def render_auth():
-    user=_cur_user()
-    if user:
-        pts=0
-        if POINTS_OK:
-            try: pts=get_points(user["username"])
-            except Exception: pass
-        st.markdown(
-            f'<div class="user-card">'
-            f'<div class="u-av">{user["username"][0].upper()}</div>'
-            f'<div><div class="u-name">{user["username"]}</div>'
-            f'<div class="u-pts">&#10022; {pts} pts</div></div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        if st.button(_t("auth_logout"),key="auth_lo",use_container_width=True):
-            try: logout_user(st.session_state.get("_auth_token",""))
-            except Exception: pass
-            st.session_state.pop("_auth_token",None); st.rerun()
-    else:
-        t1,t2=st.tabs([_t("auth_login"),_t("auth_register")])
-        with t1:
-            u=st.text_input(_t("auth_username"),key="li_u",placeholder="username")
-            p=st.text_input(_t("auth_password"),type="password",key="li_p",placeholder="password")
-            if st.button(_t("auth_login"),key="li_b",use_container_width=True):
-                try:
-                    ok,msg,tok=login_user(u,p)
-                    if ok:
-                        st.session_state["_auth_token"]=tok
-                        if POINTS_OK:
-                            try: add_points(u,"daily_login")
-                            except Exception: pass
-                        st.success(msg); st.rerun()
-                    else: st.error(msg)
-                except Exception as e: st.error(f"Login error: {e}")
-        with t2:
-            ru=st.text_input(_t("auth_username"),key="re_u",placeholder="new username")
-            re=st.text_input(_t("auth_email"),key="re_e",placeholder="email@example.com")
-            rp=st.text_input(_t("auth_password"),type="password",key="re_p",placeholder="password")
-            if st.button(_t("auth_register"),key="re_b",use_container_width=True):
-                try:
-                    ok,msg=register_user(ru,rp,re)
-                    (st.success if ok else st.error)(msg)
-                except Exception as e: st.error(f"Error: {e}")
+def wl_remove(username,name):
+    if WISHLIST_EXT:
+        try: _wl_remove(username,name); return
+        except Exception: pass
+    k=wl_key(username)
+    st.session_state[k]=[p for p in st.session_state.get(k,[]) if p.get("name","")!=name]
+
+def wl_get(username):
+    if WISHLIST_EXT:
+        try: return _wl_get(username)
+        except Exception: pass
+    return st.session_state.get(wl_key(username),[])
+
+def wl_check(username,name):
+    if WISHLIST_EXT:
+        try: return _wl_check(username,name)
+        except Exception: pass
+    return any(p.get("name","")==name for p in st.session_state.get(wl_key(username),[]))
+
+def save_itin_fn(username,itinerary,city,title):
+    if WISHLIST_EXT:
+        try: _save_itin_ext(username,itinerary,city,title); return
+        except Exception: pass
+    k=f"_saved_itins_{username}"
+    saved=st.session_state.get(k,[])
+    saved.append({"city":city,"title":title,"data":itinerary,
+                  "saved_at":datetime.now().strftime("%Y-%m-%d %H:%M")})
+    st.session_state[k]=saved[-10:]
 
 # ══════════════════════════════════════════════════════════════════
-# WISHLIST HEART BUTTON
+# AI MUST-SEE
 # ══════════════════════════════════════════════════════════════════
-def wl_button(place_dict:dict, key:str):
-    user=_cur_user()
-    if not user: return
-    uname=user["username"]; nm=place_dict.get("name","")
-    saved=wl_check(uname,nm)
-    icon="♥" if saved else "♡"
-    if st.button(icon,key=key,help="Remove" if saved else "Save to wishlist"):
-        if saved:
-            wl_remove(uname,nm); st.toast(f"Removed {nm}")
-        else:
-            wl_add(uname,{"name":nm,"lat":place_dict.get("lat",0),
-                          "lon":place_dict.get("lon",0),
-                          "type":place_dict.get("type_label",""),
-                          "rating":place_dict.get("rating",0),
-                          "address":place_dict.get("address",""),
-                          "district":place_dict.get("district","")})
-            st.toast(f"Saved {nm}!")
-            if POINTS_OK:
-                try: add_points(uname,"wishlist_add",note=nm)
-                except Exception: pass
-        st.rerun()
+@st.cache_data(ttl=3600,show_spinner=False)
+def get_ai_mustsee(city,country,days,types_t):
+    types=list(types_t)
+    if DEEPSEEK_KEY:
+        try:
+            t_str=", ".join(types[:5])
+            prompt=(f"Recommend {min(days*3,12)} must-visit famous places in {city} "
+                    f"for a {days}-day trip. Types: {t_str}. Only real well-known landmarks. "
+                    f"Return JSON array only. Each item: name, type, why (max 10 words), "
+                    f"rating (4.0-5.0), lat (number), lon (number), duration_min (integer).")
+            resp=requests.post("https://api.deepseek.com/v1/chat/completions",
+                headers={"Authorization":f"Bearer {DEEPSEEK_KEY}","Content-Type":"application/json"},
+                json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt}],
+                      "temperature":0.3,"max_tokens":1400},timeout=20)
+            if resp.status_code==200:
+                content=resp.json()["choices"][0]["message"]["content"].strip()
+                m=re.search(r'\[.*\]',content,re.DOTALL)
+                if m:
+                    items=json.loads(m.group())
+                    if isinstance(items,list) and items:
+                        cleaned=[]
+                        for it in items[:12]:
+                            if not isinstance(it,dict): continue
+                            cleaned.append({"name":_ss(it.get("name","")),
+                                            "type":_ss(it.get("type","🏛️ Attraction")),
+                                            "why":_ss(it.get("why","")),
+                                            "rating":float(it.get("rating",4.5)),
+                                            "lat":float(it.get("lat",0)),
+                                            "lon":float(it.get("lon",0)),
+                                            "duration_min":int(it.get("duration_min",60))})
+                        if cleaned: return cleaned
+        except Exception: pass
+    BUILTIN={
+        "tokyo":[
+            {"name":"Senso-ji Temple","type":"🏛️ Attraction","why":"Tokyo oldest temple","rating":4.9,"lat":35.7148,"lon":139.7967,"duration_min":60},
+            {"name":"Shibuya Crossing","type":"🏛️ Attraction","why":"World busiest crossing","rating":4.8,"lat":35.6595,"lon":139.7004,"duration_min":20},
+            {"name":"Shinjuku Gyoen","type":"🌿 Park","why":"Imperial garden with cherry blossoms","rating":4.8,"lat":35.6851,"lon":139.7103,"duration_min":90},
+        ],
+        "paris":[
+            {"name":"Eiffel Tower","type":"🏛️ Attraction","why":"Iconic symbol of Paris","rating":4.8,"lat":48.8584,"lon":2.2945,"duration_min":90},
+            {"name":"Louvre Museum","type":"🏛️ Attraction","why":"World largest art museum","rating":4.8,"lat":48.8606,"lon":2.3376,"duration_min":180},
+        ],
+        "london":[
+            {"name":"British Museum","type":"🏛️ Attraction","why":"Free world class museum","rating":4.8,"lat":51.5194,"lon":-0.1270,"duration_min":120},
+            {"name":"Tower of London","type":"🏛️ Attraction","why":"900 years of royal history","rating":4.7,"lat":51.5081,"lon":-0.0759,"duration_min":90},
+        ],
+        "singapore":[
+            {"name":"Gardens by the Bay","type":"🌿 Park","why":"Futuristic Supertree Grove","rating":4.9,"lat":1.2816,"lon":103.8636,"duration_min":120},
+            {"name":"Marina Bay Sands SkyPark","type":"🏛️ Attraction","why":"Iconic skyline views","rating":4.8,"lat":1.2834,"lon":103.8607,"duration_min":60},
+        ],
+        "dubai":[
+            {"name":"Burj Khalifa","type":"🏛️ Attraction","why":"World tallest building","rating":4.8,"lat":25.1972,"lon":55.2744,"duration_min":90},
+        ],
+        "bali":[
+            {"name":"Tanah Lot Temple","type":"🏛️ Attraction","why":"Sunset cliff temple","rating":4.8,"lat":-8.6215,"lon":115.0865,"duration_min":90},
+            {"name":"Tegallalang Rice Terraces","type":"🌿 Park","why":"Iconic green terraces","rating":4.7,"lat":-8.4319,"lon":115.2786,"duration_min":60},
+        ],
+    }
+    city_lc=city.strip().lower()
+    for k,v in BUILTIN.items():
+        if k in city_lc: return v
+    return []
 
 # ══════════════════════════════════════════════════════════════════
-# ADD TO DAY
+# MAP BUILDER
 # ══════════════════════════════════════════════════════════════════
-def add_to_day(place_dict:dict, day_key:str) -> bool:
-    itin=st.session_state.get("_itin",{})
-    if not itin or day_key not in itin: return False
-    stops=itin.get(day_key,[])
-    if not isinstance(stops,list): stops=[]
-    if place_dict.get("name","") in {s.get("name","") for s in stops}:
-        st.toast("Already in this day!",icon="ℹ️"); return False
-    stops.append({
-        "name":      place_dict.get("name",""),
-        "lat":       place_dict.get("lat",0),
-        "lon":       place_dict.get("lon",0),
-        "type_label":place_dict.get("type_label",place_dict.get("type","🏛️ Attraction")),
-        "rating":    place_dict.get("rating",4.5),
-        "address":   place_dict.get("address",""),
-        "district":  place_dict.get("district",""),
-        "description":place_dict.get("description",""),
-        "time_slot": "TBD",
-        "transport_to_next": None,
-    })
-    itin[day_key]=stops; st.session_state["_itin"]=itin; return True
-
-# ══════════════════════════════════════════════════════════════════
-# MAP
-# ══════════════════════════════════════════════════════════════════
-def build_map(df,lat,lon,itinerary,hotel_c=None,depart_c=None,arrive_c=None):
-    m=folium.Map(location=[lat,lon],zoom_start=13,tiles="CartoDB positron")
+def build_map(df,lat,lon,itinerary):
+    if not FOLIUM_OK: return None
+    m=folium.Map(location=[lat,lon],zoom_start=13,tiles="CartoDB dark_matter")
     vi={}
     if itinerary:
         for di,(dl,stops) in enumerate(itinerary.items()):
@@ -1326,475 +1155,47 @@ def build_map(df,lat,lon,itinerary,hotel_c=None,depart_c=None,arrive_c=None):
                 a,b=stops[si],stops[si+1]
                 if not (a.get("lat") and b.get("lat")): continue
                 folium.PolyLine([[a["lat"],a["lon"]],[b["lat"],b["lon"]]],
-                                color=dc,weight=2.8,opacity=.55,dash_array="5 4").add_to(m)
+                                color=dc,weight=3,opacity=.6,dash_array="4 4").add_to(m)
     for _,row in df.iterrows():
         v=vi.get(row["name"])
         if v:
             di,sn,_=v; color=DAY_COLORS[di%len(DAY_COLORS)]; label=str(sn)
-            day_info=f"Day {di+1} Stop {sn}"
         else:
-            color="#d1d5db"; label="."; day_info="Not scheduled"
-        addr=_ss(row.get("address",""))
-        dur=estimate_duration(_ss(row.get("name","")),row.get("type_label",""))
-        pop=(f"<div style='font-family:-apple-system,sans-serif;min-width:160px'>"
-             f"<b style='font-size:.87rem'>{_ss(row['name'])}</b><br>"
-             f"<span style='color:#9ca3af;font-size:.74rem'>&#9733; {row['rating']:.1f} &middot; {day_info}</span><br>"
-             f"<span style='color:#a78bfa;font-size:.72rem'>&#128337; {format_duration(dur)}</span>"
-             f"{'<br><span style=font-size:.72rem;color:#6b7280>'+addr[:50]+'</span>' if addr and 'Sample' not in addr else ''}"
+            color="#374151"; label="·"
+        nm=_ss(row.get("name",""))
+        dur=estimate_duration(nm,row.get("type_label",""))
+        pop=(f"<div style='font-family:-apple-system,sans-serif;background:#1a1040;color:#fff;"
+             f"padding:12px;border-radius:10px;min-width:160px'>"
+             f"<b style='font-size:.88rem'>{nm}</b><br>"
+             f"<span style='color:#c4b5fd;font-size:.74rem'>⭐ {row['rating']:.1f}</span><br>"
+             f"<span style='color:#a78bfa;font-size:.72rem'>⏱ {format_duration(dur)}</span>"
              f"</div>")
-        folium.Marker(
-            [row["lat"],row["lon"]],
-            popup=folium.Popup(pop,max_width=220),
-            tooltip=f"{_ss(row['name'])} - {format_duration(dur)}",
+        folium.Marker([row["lat"],row["lon"]],
+            popup=folium.Popup(pop,max_width=200),
+            tooltip=f"{nm}",
             icon=folium.DivIcon(
-                html=(f'<div style="width:22px;height:22px;border-radius:50%;background:{color};'
-                      f'border:2px solid rgba(255,255,255,.9);display:flex;align-items:center;'
+                html=(f'<div style="width:26px;height:26px;border-radius:50%;background:{color};'
+                      f'border:2px solid rgba(255,255,255,.85);display:flex;align-items:center;'
                       f'justify-content:center;color:white;font-size:10px;font-weight:700;'
-                      f'box-shadow:0 2px 8px rgba(109,40,217,.22)">{label}</div>'),
-                icon_size=(22,22),icon_anchor=(11,11),
-            ),
-        ).add_to(m)
-    def sm(c,ic,tip):
-        folium.Marker(list(c),tooltip=tip,
-            icon=folium.DivIcon(html=f'<div style="font-size:18px">{ic}</div>',
-                                icon_size=(24,24),icon_anchor=(12,12))).add_to(m)
-    if hotel_c:  sm(hotel_c,"🏨","Hotel")
-    if depart_c: sm(depart_c,"🚩","Start")
-    if arrive_c: sm(arrive_c,"🏁","End")
+                      f'box-shadow:0 2px 12px rgba(0,0,0,.4)">{label}</div>'),
+                icon_size=(26,26),icon_anchor=(13,13),
+            )).add_to(m)
     return m
 
 # ══════════════════════════════════════════════════════════════════
-# INLINE SWAP
+# HTML EXPORT
 # ══════════════════════════════════════════════════════════════════
-def render_swap(itinerary,df,day_key,stop_idx):
-    stops=itinerary.get(day_key,[])
-    if not isinstance(stops,list) or stop_idx>=len(stops): return
-    cur=stops[stop_idx]; cur_type=cur.get("type_label","")
-    used={s["name"] for sl in itinerary.values() if isinstance(sl,list) for s in sl}
-    cands=(df[(df["type_label"]==cur_type)&(~df["name"].isin(used))]
-           .sort_values("rating",ascending=False).head(4))
-    if cands.empty: st.warning("No alternatives found."); return
-    st.markdown(
-        f'<div class="sw-panel"><div style="font-weight:600;font-size:.82rem;'
-        f'color:#1e1b4b;margin-bottom:8px">Swap: <b>{_ss(cur["name"])}</b></div>',
-        unsafe_allow_html=True,
-    )
-    cols=st.columns(min(len(cands),4))
-    for i,(_,alt) in enumerate(cands.iterrows()):
-        with cols[i%min(len(cands),4)]:
-            nm=_ss(alt["name"]); rat=alt.get("rating",0)
-            dur=estimate_duration(nm,alt.get("type_label",""))
-            st.markdown(
-                f'<div style="background:rgba(255,255,255,.80);border-radius:9px;'
-                f'padding:9px;border:1px solid rgba(255,255,255,.9);margin-bottom:3px">'
-                f'<div style="font-weight:600;font-size:.80rem;color:#1e1b4b">{nm}</div>'
-                f'<div style="font-size:.70rem;color:#9ca3af">&#9733; {rat:.1f} &middot; {format_duration(dur)}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            if st.button("Select",key=f"swc_{day_key}_{stop_idx}_{nm[:6]}",use_container_width=True):
-                try:
-                    if WISHLIST_EXT:
-                        new_it=swap_place_in_itinerary(
-                            st.session_state.get("_itin",itinerary),day_key,stop_idx,alt.to_dict())
-                    else: raise Exception("no ext")
-                except Exception:
-                    new_it=dict(st.session_state.get("_itin",itinerary))
-                    ds=list(new_it.get(day_key,[])); ds[stop_idx]=alt.to_dict()
-                    new_it[day_key]=ds
-                st.session_state["_itin"]=new_it
-                st.session_state.pop(f"_sw_{day_key}_{stop_idx}",None)
-                st.toast(f"Replaced with {nm}"); st.rerun()
-    if st.button("Cancel",key=f"swcancel_{day_key}_{stop_idx}"):
-        st.session_state.pop(f"_sw_{day_key}_{stop_idx}",None); st.rerun()
-    st.markdown('</div>',unsafe_allow_html=True)
-
-# ══════════════════════════════════════════════════════════════════
-# AI PICKS PANEL (per day)
-# ══════════════════════════════════════════════════════════════════
-def render_ai_picks(city,country,day_idx,district,sel_types,ndays,day_key):
-    picks=get_day_picks(city,country,day_idx,ndays,sel_types,LANG)
-    if not picks: return
-    current_itin=st.session_state.get("_itin",{})
-    existing={s.get("name","") for s in current_itin.get(day_key,[])
-              if isinstance(current_itin.get(day_key,[]),list)}
-
-    st.markdown(
-        f'<div class="ai-panel">'
-        f'<div style="font-weight:700;font-size:.80rem;color:#1e1b4b;margin-bottom:2px">'
-        f'&#10022; {_t("ai_rec_heading")}</div>'
-        f'<div style="font-size:.70rem;color:#a78bfa;margin-bottom:10px">'
-        f'{"AI-powered" if DEEPSEEK_KEY else "Curated"} must-see highlights</div>',
-        unsafe_allow_html=True,
-    )
-    cols=st.columns(min(len(picks),3))
-    for i,rec in enumerate(picks):
-        with cols[i%min(len(picks),3)]:
-            nm=_ss(rec.get("name","")); nl=_ss(rec.get("name_local",""))
-            tp=_ss(rec.get("type","")); why=_ss(rec.get("why",""))
-            tip=_ss(rec.get("tip","")); rat=rec.get("rating",4.5)
-            dur=rec.get("duration_min",estimate_duration(nm,tp))
-            already=nm in existing
-            nm_disp=f"{nm}" + (f'<span style="color:#a78bfa;font-size:.69rem;display:block">{nl}</span>' if nl else "")
-            st.markdown(
-                f'<div class="ai-item">'
-                f'<div style="font-weight:600;font-size:.82rem;color:#1e1b4b">{nm_disp}</div>'
-                f'<div style="color:#a78bfa;font-size:.70rem">{tp}</div>'
-                f'<div style="color:#6b7280;font-size:.74rem;margin-top:2px">{why}</div>'
-                f'{"<div style=color:#f59e0b;font-size:.69rem;margin-top:1px>Tip: "+tip+"</div>" if tip else ""}'
-                f'<div style="display:flex;gap:8px;margin-top:4px;align-items:center">'
-                f'<span style="font-size:.69rem;color:#c4b5fd">&#9733; {rat}</span>'
-                f'<span class="dur-badge">&#128337; {format_duration(dur)}</span>'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
-            if already:
-                st.markdown('<div style="font-size:.70rem;color:#16a34a;margin-top:2px">&#10003; In itinerary</div>',
-                            unsafe_allow_html=True)
-            else:
-                if st.button(f"+ Add",key=f"ai_add_{day_key}_{i}_{nm[:6]}",use_container_width=True):
-                    pd_={
-                        "name":nm,"lat":rec.get("lat",0),"lon":rec.get("lon",0),
-                        "type_label":tp,"rating":rat,"address":"",
-                        "district":district or "","description":why,
-                    }
-                    if add_to_day(pd_,day_key):
-                        st.toast(f"Added {nm}!"); st.rerun()
-    st.markdown('</div>',unsafe_allow_html=True)
-
-# ══════════════════════════════════════════════════════════════════
-# ITINERARY TABLE
-# ══════════════════════════════════════════════════════════════════
-def render_table(df,itinerary,day_budgets,country,city="",
-                 day_districts=None,sel_types=None):
-    if isinstance(day_budgets,int): day_budgets=[day_budgets]*30
-    if day_districts is None: day_districts=[""]* 30
-    if sel_types is None: sel_types=list(PTYPES.keys())
-
-    stop_map={}
-    if itinerary:
-        for di,(dl,stops) in enumerate(itinerary.items()):
-            if not isinstance(stops,list): continue
-            for si,s in enumerate(stops): stop_map[s["name"]]=(di,si,dl,s)
-
-    n2r={row["name"]:row for _,row in df.iterrows()}
-    scheduled=[]
-    if itinerary:
-        for di,(dl,stops) in enumerate(itinerary.items()):
-            if not isinstance(stops,list): continue
-            for si,s in enumerate(stops):
-                if s["name"] in n2r: scheduled.append((di,si,dl,s["name"]))
-
-    snames={x[3] for x in scheduled}
-    unscheduled=[row for _,row in df.iterrows() if row["name"] not in snames]
-    cur_day=-1; user=_cur_user()
-    current_itin=st.session_state.get("_itin",itinerary)
-
-    for di,si,dl,nm in scheduled:
-        row=n2r[nm]; color=DAY_COLORS[di%len(DAY_COLORS)]
-        d_usd=day_budgets[di] if di<len(day_budgets) else day_budgets[-1]
-
-        # Day header
-        if di!=cur_day:
-            cur_day=di; day_key=f"Day {di+1}"
-            day_stops=list((current_itin or {}).get(day_key,[]))
-            lb,_=budget_level(d_usd)
-            district=day_districts[di] if di<len(day_districts) else ""
-
-            # Build timeline for this day
-            timeline=build_day_timeline(day_stops)
-            total_dur=sum(s.get("duration_min",60) for s in timeline)
-
-            st.markdown(
-                f'<div class="day-hdr">'
-                f'<div class="day-dot" style="background:{color}"></div>'
-                f'<div class="day-ttl">{day_key}</div>'
-                f'<div class="day-info">'
-                f'{len(day_stops)} stops &nbsp;&middot;&nbsp; '
-                f'${d_usd}/day &nbsp;&middot;&nbsp; {lb} &nbsp;&middot;&nbsp; '
-                f'~{format_duration(total_dur)} total</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            # AI picks for this day
-            render_ai_picks(city,country,di,district,sel_types,len(itinerary),day_key)
-
-        # Build timeline dict for lookup
-        day_key2=f"Day {di+1}"
-        day_stops2=list((current_itin or {}).get(day_key2,[]))
-        tl_map={s.get("name",""):s for s in build_day_timeline(day_stops2)}
-        tl_data=tl_map.get(nm,{})
-
-        sd=stop_map.get(nm,(None,None,None,{}))[3]
-        sw_key=f"_sw_Day {di+1}_{si}"
-
-        with st.container():
-            c_num,c_info,c_time,c_act=st.columns([1,5,3,1])
-
-            with c_num:
-                st.markdown(
-                    f'<div style="text-align:center;padding-top:8px">'
-                    f'<div class="sn" style="background:{color}">{si+1}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-            with c_info:
-                tl_label=_ss(row.get("type_label","") or row.get("type",""))
-                rat=row.get("rating",0); dist=_ss(row.get("district",""))
-                addr=_ss(row.get("address","")); ph=_ss(row.get("phone",""))
-                _,cs=cost_est(tl_label,d_usd,country) if tl_label else (0,"")
-                dur=estimate_duration(_ss(nm),tl_label)
-
-                h=(f'<div style="padding:5px 0">'
-                   f'<div class="stop-name">{_ss(nm)}</div>'
-                   f'<div class="stop-meta">{tl_label}'
-                   f'{"&nbsp;·&nbsp;&#9733; "+str(rat) if rat else ""}'
-                   f'{"&nbsp;·&nbsp;"+dist if dist else ""}</div>')
-                if cs: h+=f'<div style="font-size:.70rem;color:#a78bfa;margin-top:2px">&#128176; {cs}</div>'
-                if addr and "Sample" not in addr:
-                    h+=f'<div style="font-size:.69rem;color:#c4b5fd;margin-top:1px">&#128205; {addr[:55]}</div>'
-                h+='</div>'
-                st.markdown(h,unsafe_allow_html=True)
-
-            with c_time:
-                arrive=tl_data.get("arrive_time","")
-                depart=tl_data.get("depart_time","")
-                dur_min=tl_data.get("duration_min",dur)
-                tr=sd.get("transport_to_next") if sd else None
-                tr_str=""
-                if tr:
-                    dk=tr.get("distance_km",0) or 0
-                    tr_str=(f'<div class="tr-chip" style="margin-top:4px">'
-                            f'&#128663; {_ss(tr.get("mode",""))} &middot; {_ss(tr.get("duration",""))}</div>')
-
-                time_html=(
-                    f'<div style="padding:5px 0">'
-                )
-                if arrive:
-                    time_html+=(
-                        f'<div class="time-badge">&#128336; {arrive} - {depart}</div>'
-                        f'<div class="dur-badge" style="margin-top:3px">&#128337; {format_duration(dur_min)}</div>'
-                    )
-                else:
-                    time_html+=f'<div class="dur-badge">&#128337; ~{format_duration(dur_min)}</div>'
-                time_html+=tr_str+"</div>"
-                st.markdown(time_html,unsafe_allow_html=True)
-
-            with c_act:
-                if user:
-                    wl_button(dict(row),key=f"wl_{di}_{si}_{nm[:5]}")
-                sw_open=st.session_state.get(sw_key,False)
-                if st.button("↔" if not sw_open else "✕",
-                             key=f"sw_{di}_{si}",
-                             help="Swap" if not sw_open else "Cancel",
-                             use_container_width=True):
-                    st.session_state[sw_key]=not sw_open; st.rerun()
-
-        if st.session_state.get(sw_key,False):
-            render_swap(current_itin,df,f"Day {di+1}",si)
-
-        st.markdown(
-            '<div style="height:1px;background:rgba(139,92,246,.07);margin:2px 0 4px"></div>',
-            unsafe_allow_html=True,
-        )
-
-    if unscheduled:
-        _render_extra(unscheduled,day_budgets,country,current_itin)
-
-# ══════════════════════════════════════════════════════════════════
-# EXTRA RECS — simplified grid
-# ══════════════════════════════════════════════════════════════════
-def _render_extra(unscheduled,day_budgets,country,itinerary=None):
-    avg=round(sum(day_budgets)/len(day_budgets)) if day_budgets else 60
-    CATS=[("Sights",["🏛️ Attraction"]),("Dining",["🍜 Restaurant","☕ Cafe"]),
-          ("Nature",["🌿 Park"]),("Shopping",["🛍️ Shopping"]),
-          ("Nightlife",["🍺 Bar/Nightlife"]),("Hotels",["🏨 Hotel"])]
-    by_type={}
-    for r in unscheduled:
-        tl=r.get("type_label","") or r.get("type","")
-        by_type.setdefault(tl,[]).append(r)
-    cat_data=[]; covered=set()
-    for cn,tls in CATS:
-        items=[]
-        for tl in tls: items.extend(by_type.get(tl,[]))
-        for tl in tls: covered.add(tl)
-        if items: cat_data.append((cn,items))
-    others=[r for tl,rs in by_type.items() if tl not in covered for r in rs]
-    if others: cat_data.append(("Other",others))
-    if not cat_data: return
-
-    day_keys=list(itinerary.keys()) if itinerary else []
-    user=_cur_user()
-
-    st.markdown(f'<div class="s-lbl">{_t("rec_heading")}</div>',unsafe_allow_html=True)
-
-    import random as _r
-    for cn,places in cat_data:
-        sk=f"_rec_{cn}"
-        if sk not in st.session_state: st.session_state[sk]=0
-        c1,c2=st.columns([9,1])
-        with c1:
-            st.markdown(
-                f'<div style="font-weight:600;font-size:.82rem;color:#1e1b4b;margin:10px 0 5px">'
-                f'{cn} <span style="color:#c4b5fd;font-size:.71rem">({min(8,len(places))}/{len(places)})</span></div>',
-                unsafe_allow_html=True,
-            )
-        with c2:
-            if st.button("&#8635;",key=f"rf_{cn}",use_container_width=True):
-                st.session_state[sk]=(st.session_state[sk]+1)%9999
-
-        _r.seed(st.session_state[sk])
-        picks=sorted(_r.sample(places,min(8,len(places))),
-                     key=lambda r:r.get("rating",0),reverse=True)
-
-        # Show in rows of 4
-        for row_s in range(0,len(picks),4):
-            chunk=picks[row_s:row_s+4]
-            cols=st.columns(len(chunk))
-            for ci,p in enumerate(chunk):
-                with cols[ci]:
-                    nm=_ss(p.get("name","")); tl=_ss(p.get("type_label","") or p.get("type",""))
-                    rat=p.get("rating",0); dist=_ss(p.get("district","") or "")
-                    addr=_ss(p.get("address","") or "")[:45]
-                    _,cs=cost_est(tl,avg,country)
-                    dur=estimate_duration(nm,tl)
-
-                    st.markdown(
-                        f'<div class="r-card">'
-                        f'<div class="r-name">{nm}</div>'
-                        f'<div class="r-meta">{tl}{"&nbsp;·&nbsp;"+dist if dist else ""}</div>'
-                        f'{"<div style=font-size:.69rem;color:#c4b5fd>"+addr+"</div>" if addr and "Sample" not in addr else ""}'
-                        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px">'
-                        f'<span style="font-size:.72rem;color:#1e1b4b">{"&#9733; "+str(rat) if rat else ""}</span>'
-                        f'<span class="dur-badge">&#128337; {format_duration(dur)}</span>'
-                        f'</div>'
-                        f'<div class="r-cost">&#128176; {cs}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-                    # Actions
-                    act_cols=st.columns([1,2]) if (user and day_keys) else ([1] if user else [2])
-                    if user and day_keys:
-                        with act_cols[0]:
-                            wl_button(dict(p),key=f"wl_ex_{cn}_{nm[:5]}_{ci}")
-                        with act_cols[1]:
-                            sel_day=st.selectbox("",["day..."]+day_keys,
-                                                  key=f"atd_{cn}_{nm[:5]}_{ci}",
-                                                  label_visibility="collapsed")
-                            if sel_day!="day..." and st.button("+",
-                                                                key=f"atdb_{cn}_{nm[:5]}_{ci}",
-                                                                use_container_width=True):
-                                if add_to_day({"name":nm,"lat":p.get("lat",0),"lon":p.get("lon",0),
-                                               "type_label":tl,"rating":rat,"address":addr,
-                                               "district":dist,"description":_ss(p.get("description",""))},
-                                              sel_day):
-                                    st.toast(f"Added {nm}!"); st.rerun()
-                    elif user:
-                        wl_button(dict(p),key=f"wl_ex_{cn}_{nm[:5]}_{ci}")
-
-# ══════════════════════════════════════════════════════════════════
-# BUDGET SUMMARY
-# ══════════════════════════════════════════════════════════════════
-def render_budget(itinerary,day_budgets,country,days):
-    if not itinerary: return
-    if isinstance(day_budgets,int): day_budgets=[day_budgets]*days
-    sym,rate=_local_rate(country); tots=[]
-    for di,(dl,stops) in enumerate(itinerary.items()):
-        if not isinstance(stops,list) or not stops: continue
-        du=day_budgets[di] if di<len(day_budgets) else day_budgets[-1]
-        t=sum(cost_est(s.get("type_label",""),du,country)[0]
-              +tr_cost((s.get("transport_to_next") or {}).get("distance_km",0) or 0,du,country)[0]
-              for s in stops)
-        tots.append((dl,t,du))
-    if not tots: return
-    st.markdown(f'<div class="s-lbl">{_t("budget_heading")}</div>',unsafe_allow_html=True)
-    gt=sum(t for _,t,_ in tots); gb=sum(d for _,_,d in tots)
-    nc=min(len(tots),4)+1; cols=st.columns(nc); any_over=False
-    for i,(dl,t,du) in enumerate(tots):
-        with cols[i%(nc-1)]:
-            over=t>du*1.1
-            if over: any_over=True
-            lb,_=budget_level(du)
-            lo_u=round(t*.8); hi_u=round(t*1.2)
-            rng=(f"${lo_u}-${hi_u}" if country=="US"
-                 else f"${lo_u}-${hi_u} ({sym}{round(lo_u*rate)}-{sym}{round(hi_u*rate)})")
-            st.markdown(
-                f'<div class="b-card"><div class="b-lbl">{_ss(dl)}</div>'
-                f'<div class="b-amt">${round(t)}{"!" if over else ""}</div>'
-                f'<div class="b-sub">{rng}</div>'
-                f'<div class="b-sub">{lb} &middot; ${du}/day</div></div>',
-                unsafe_allow_html=True,
-            )
-    with cols[-1]:
-        lo=round(gt*.8); hi=round(gt*1.2)
-        gs=(f"${lo}-${hi}" if country=="US"
-            else f"${lo}-${hi} ({sym}{round(lo*rate)}-{sym}{round(hi*rate)})")
-        st.markdown(
-            f'<div class="b-card" style="border:1.5px solid rgba(139,92,246,.20)">'
-            f'<div class="b-lbl">{_t("budget_total")}</div>'
-            f'<div class="b-amt" style="font-size:1.55rem;color:#7c3aed">${round(gt)}</div>'
-            f'<div class="b-sub">{gs}</div>'
-            f'<div class="b-sub">{days}d &middot; ${gb} budget</div></div>',
-            unsafe_allow_html=True,
-        )
-    if any_over:
-        st.markdown(f'<div class="warn" style="margin-top:6px">{_t("budget_over")}</div>',
-                    unsafe_allow_html=True)
-    with st.expander(_t("budget_breakdown")):
-        rows=[]
-        for di,(dl,stops) in enumerate(itinerary.items()):
-            if not isinstance(stops,list) or not stops: continue
-            du=day_budgets[di] if di<len(day_budgets) else day_budgets[-1]
-            for s in stops:
-                tl=s.get("type_label",""); _,cr=cost_est(tl,du,country)
-                dur=estimate_duration(_ss(s.get("name","")),tl)
-                rows.append({"Day":_ss(dl),"Place":_ss(s.get("name","")),"Type":tl,
-                              "Duration":format_duration(dur),"Est.Cost":cr})
-        if rows: st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
-
-# ══════════════════════════════════════════════════════════════════
-# COLLAB
-# ══════════════════════════════════════════════════════════════════
-def render_collab():
-    if not AUTH_OK: return
-    user=_cur_user()
-    if not user:
-        with st.expander(_t("collab_heading"),expanded=False):
-            st.caption(_t("auth_login_req"))
-        return
-    with st.expander(_t("collab_heading"),expanded=False):
-        uname=user["username"]
-        if st.button(_t("collab_share"),key="cb_gen"):
-            import uuid as _u
-            try:
-                tok=create_collab_link(uname,str(_u.uuid4())[:8])
-                st.session_state["_ct"]=tok
-            except Exception as e: st.error(str(e))
-        if "_ct" in st.session_state:
-            st.success(f"Code: **{st.session_state['_ct']}**")
-        jc=st.text_input("Join code",key="cb_jc",placeholder="ABCDEFGH")
-        if st.button("Join",key="cb_jb"):
-            try:
-                ok,msg=join_collab(uname,jc)
-                (st.success if ok else st.error)(msg)
-            except Exception as e: st.error(str(e))
-
-# ══════════════════════════════════════════════════════════════════
-# EXPORT
-# ══════════════════════════════════════════════════════════════════
-def build_html(itinerary,city,day_budgets,country):
+def build_html(itinerary, city, day_budgets, country):
     if isinstance(day_budgets,int): day_budgets=[day_budgets]*30
     avg=round(sum(day_budgets)/len(day_budgets)) if day_budgets else 60
     def esc(s):
         s=_ss(s)
         return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
-    DC=DAY_COLORS; lb,_=budget_level(avg)
     total_stops=sum(len(v) for v in itinerary.values() if isinstance(v,list))
     mjs=[]; pjs=[]; mlats=[]; mlons=[]
     for di,(dl,stops) in enumerate(itinerary.items()):
         if not isinstance(stops,list) or not stops: continue
-        c=DC[di%len(DC)]; pc=[]
+        c=DAY_COLORS[di%len(DAY_COLORS)]; pc=[]
         for si,s in enumerate(stops):
             lat=s.get("lat",0); lon=s.get("lon",0)
             if not lat or not lon: continue
@@ -1804,521 +1205,1093 @@ def build_html(itinerary,city,day_budgets,country):
         if len(pc)>1: pjs.append(f'{{"c":"{c}","pts":[{",".join(pc)}]}}')
     clat=sum(mlats)/len(mlats) if mlats else 35.
     clon=sum(mlons)/len(mlons) if mlons else 139.
-
-    # Build timeline for each day
     days_html=""
     for di,(dl,stops) in enumerate(itinerary.items()):
         if not isinstance(stops,list) or not stops: continue
-        du=day_budgets[di] if di<len(day_budgets) else day_budgets[-1]
-        c=DC[di%len(DC)]
-        tl_stops=build_day_timeline(stops)
+        du=day_budgets[di] if di<len(day_budgets) else avg
+        c=DAY_COLORS[di%len(DAY_COLORS)]
+        tl_stops=build_timeline(stops)
         rows_html=""
         for si,s in enumerate(tl_stops):
             arrive=s.get("arrive_time",""); depart=s.get("depart_time","")
             dur=s.get("duration_min",60)
             tr=s.get("transport_to_next") or {}
             route=esc(f"{tr.get('mode','--')} {tr.get('duration','')}") if tr else "Last stop"
-            time_str=f"{arrive} - {depart}" if arrive else "--"
-            rows_html+=(
-                f"<tr><td>{si+1}</td>"
-                f"<td>{esc(time_str)}</td>"
-                f"<td><b>{esc(s.get('name',''))}</b></td>"
-                f"<td>{esc(s.get('type_label',''))}</td>"
-                f"<td>{format_duration(dur)}</td>"
-                f"<td>{'&#9733; '+str(s.get('rating',0)) if s.get('rating') else '--'}</td>"
-                f"<td>{route}</td></tr>"
-            )
+            rows_html+=(f"<tr><td>{si+1}</td><td>{esc(arrive)}-{esc(depart)}</td>"
+                        f"<td><b>{esc(s.get('name',''))}</b></td>"
+                        f"<td>{esc(s.get('type_label',''))}</td>"
+                        f"<td>{format_duration(dur)}</td>"
+                        f"<td>{'⭐ '+str(s.get('rating',0)) if s.get('rating') else '--'}</td>"
+                        f"<td>{route}</td></tr>")
         total_dur=sum(s.get("duration_min",60) for s in tl_stops)
-        days_html+=(
-            f"<h3 style='color:{c}'>{esc(dl)} "
-            f"&#8212; {len(stops)} stops &middot; ${du}/day &middot; ~{format_duration(total_dur)}</h3>"
-            f"<table><thead><tr>"
-            f"<th>#</th><th>Time</th><th>Place</th><th>Type</th>"
-            f"<th>Duration</th><th>Rating</th><th>Getting There</th>"
-            f"</tr></thead><tbody>{rows_html}</tbody></table>"
-        )
-
-    html=f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Itinerary - {esc(city.title())}</title>
+        days_html+=(f"<h3 style='color:{c};margin:24px 0 8px'>{esc(dl)} — {len(stops)} stops · ~{format_duration(total_dur)}</h3>"
+                    f"<table><thead><tr><th>#</th><th>Time</th><th>Place</th><th>Type</th>"
+                    f"<th>Duration</th><th>Rating</th><th>Getting There</th></tr></thead><tbody>{rows_html}</tbody></table>")
+    return (f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>Voyager — {esc(city.title())}</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-*{{box-sizing:border-box}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-     background:#f5f3ff;color:#1e1b4b;max-width:960px;margin:0 auto;padding:24px}}
-h1{{font-size:1.9rem;font-weight:700;letter-spacing:-.03em;margin:0 0 6px}}
-h3{{font-size:.98rem;font-weight:700;margin:22px 0 7px}}
-.badge{{display:inline-flex;align-items:center;
-       background:rgba(139,92,246,.10);border:1px solid rgba(139,92,246,.20);
-       border-radius:20px;padding:3px 12px;font-size:.73rem;color:#7c3aed;
-       font-weight:600;margin-bottom:14px}}
-.summary{{background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.14);
-         border-radius:11px;padding:10px 14px;font-size:.82rem;color:#6d28d9;margin-bottom:18px}}
-#map{{height:400px;border-radius:16px;margin:18px 0;
-      box-shadow:0 4px 20px rgba(109,40,217,.10)}}
-table{{width:100%;border-collapse:collapse;font-size:.81rem;
-       background:rgba(255,255,255,.8);border-radius:10px;overflow:hidden;margin-bottom:6px}}
-thead tr{{background:rgba(139,92,246,.08)}}
-th,td{{padding:7px 10px;border-bottom:1px solid rgba(139,92,246,.07);text-align:left}}
-th{{font-weight:600;color:#7c3aed;font-size:.73rem;text-transform:uppercase;letter-spacing:.04em}}
-tr:hover td{{background:rgba(139,92,246,.03)}}
-footer{{color:#c4b5fd;font-size:.72rem;margin-top:32px;text-align:center}}
-</style>
-</head>
-<body>
-<div class="badge">&#10022; AI Travel Planner</div>
-<h1>&#9992; {esc(city.title())}</h1>
-<div class="summary">
-  ${sum(day_budgets)} total &nbsp;&middot;&nbsp;
-  {len(itinerary)} days &nbsp;&middot;&nbsp;
-  {total_stops} stops &nbsp;&middot;&nbsp;
-  avg ${avg}/day &nbsp;&middot;&nbsp; {lb}
-</div>
-<div id="map"></div>
-{days_html}
-<footer>AI Travel Planner &nbsp;&middot;&nbsp; Ctrl+P to save as PDF</footer>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
+*{{box-sizing:border-box}}body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+background:linear-gradient(135deg,#0f0a1e,#1a0f3c);color:#f8f8ff;max-width:980px;margin:0 auto;padding:32px 24px}}
+h1{{font-size:2rem;font-weight:300;letter-spacing:-.02em;margin:0 0 8px;color:#e0d9ff}}
+h3{{font-size:.96rem;font-weight:600;margin:20px 0 8px}}
+.badge{{display:inline-flex;align-items:center;background:rgba(139,92,246,.15);border:1px solid rgba(167,139,250,.3);
+border-radius:20px;padding:3px 14px;font-size:.72rem;color:#c4b5fd;font-weight:600;margin-bottom:14px}}
+.summary{{background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.15);border-radius:12px;
+padding:12px 16px;font-size:.82rem;color:#a78bfa;margin-bottom:20px}}
+#map{{height:420px;border-radius:18px;margin:20px 0;border:1px solid rgba(139,92,246,.2)}}
+table{{width:100%;border-collapse:collapse;font-size:.80rem;background:rgba(255,255,255,.04);
+border-radius:12px;overflow:hidden;margin:4px 0}}
+thead tr{{background:rgba(139,92,246,.10)}}
+th,td{{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.06);text-align:left}}
+th{{font-weight:600;color:#a78bfa;font-size:.70rem;text-transform:uppercase;letter-spacing:.05em}}
+tr:hover td{{background:rgba(139,92,246,.05)}}
+footer{{color:rgba(167,139,250,.4);font-size:.70rem;margin-top:40px;text-align:center;padding-top:20px;border-top:1px solid rgba(255,255,255,.06)}}
+</style></head><body>
+<div class="badge">✦ Voyager AI Travel Planner</div>
+<h1>✈ {esc(city.title())}</h1>
+<div class="summary">${sum(day_budgets[:len(itinerary)])} total &nbsp;·&nbsp; {len(itinerary)} days &nbsp;·&nbsp; {total_stops} stops &nbsp;·&nbsp; avg ${avg}/day</div>
+<div id="map"></div>{days_html}
+<footer>Voyager AI Travel Planner &nbsp;·&nbsp; Ctrl+P to save as PDF</footer>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
 var m=L.map('map').setView([{clat},{clon}],13);
-L.tileLayer('https://{{s}}.basemaps.cartocdn.com/rastertiles/voyager/{{z}}/{{x}}/{{y}}{{r}}.png',
-  {{attribution:'CartoDB'}}).addTo(m);
+L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png',{{attribution:'CartoDB'}}).addTo(m);
 [{",".join(mjs)}].forEach(function(mk){{
-  var ic=L.divIcon({{
-    html:'<div style="width:22px;height:22px;border-radius:50%;background:'+mk.c+
-         ';border:2px solid rgba(255,255,255,.9);display:flex;align-items:center;'+
-         'justify-content:center;color:white;font-size:10px;font-weight:700">'+mk.s+'</div>',
-    iconSize:[22,22],iconAnchor:[11,11]}});
-  L.marker([mk.lat,mk.lon],{{icon:ic}})
-   .bindPopup('<b>'+mk.n+'</b><br>Day '+mk.d+' Stop '+mk.s).addTo(m);
+var ic=L.divIcon({{html:'<div style="width:24px;height:24px;border-radius:50%;background:'+mk.c+';border:2px solid rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center;color:white;font-size:10px;font-weight:700">'+mk.s+'</div>',iconSize:[24,24],iconAnchor:[12,12]}});
+L.marker([mk.lat,mk.lon],{{icon:ic}}).bindPopup('<b>'+mk.n+'</b><br>Day '+mk.d+' Stop '+mk.s).addTo(m);
 }});
-[{",".join(pjs)}].forEach(function(pl){{
-  L.polyline(pl.pts,{{color:pl.c,weight:3,opacity:.55,dashArray:'5 4'}}).addTo(m);
-}});
-</script>
-</body>
-</html>"""
-    return html.encode("utf-8")
-
-def render_export(itinerary,city,day_budgets,country):
-    if not itinerary or not any(isinstance(v,list) and v for v in itinerary.values()): return
-    if isinstance(day_budgets,int): day_budgets=[day_budgets]*30
-    st.markdown(f'<div class="s-lbl">{_t("export_heading")}</div>',unsafe_allow_html=True)
-    c1,c2=st.columns(2)
-    with c1:
-        st.markdown('<div style="font-weight:600;font-size:.82rem;color:#1e1b4b;margin-bottom:6px">HTML Report</div>',
-                    unsafe_allow_html=True)
-        try:
-            data=build_html(itinerary,city,day_budgets,country)
-            st.download_button("Download",data=data,
-                               file_name=f"itinerary_{city.lower().replace(' ','_')}.html",
-                               mime="text/html;charset=utf-8",use_container_width=True)
-            st.caption("Open in browser > Ctrl+P > Save as PDF")
-        except Exception as e: st.error(f"Export error: {e}")
-    with c2:
-        st.markdown('<div style="font-weight:600;font-size:.82rem;color:#1e1b4b;margin-bottom:6px">Google Calendar</div>',
-                    unsafe_allow_html=True)
-        sd=st.date_input("Start date",key="exp_date",label_visibility="collapsed")
-        if sd and itinerary:
-            bd=datetime.combine(sd,datetime.min.time())
-            SM={"9:00 AM":(9,0),"10:30 AM":(10,30),"12:00 PM":(12,0),"1:30 PM":(13,30),
-                "3:00 PM":(15,0),"4:30 PM":(16,30),"6:00 PM":(18,0),"7:30 PM":(19,30)}
-            import urllib.parse
-            for di,(dl,stops) in enumerate(itinerary.items()):
-                if not isinstance(stops,list): continue
-                with st.expander(f"{_ss(dl)} ({len(stops)} events)",expanded=False):
-                    for si,s in enumerate(stops):
-                        nm=_ss(s.get("name","Stop"))
-                        hh,mm=SM.get(s.get("time_slot","9:00 AM"),(9+si,0))
-                        dd=bd+timedelta(days=di)
-                        st2=dd.replace(hour=min(hh,23),minute=mm,second=0)
-                        et=st2+timedelta(hours=1,minutes=30)
-                        p={"action":"TEMPLATE","text":f"{nm} ({city.title()})",
-                           "location":_ss(s.get("address","") or city)[:100],
-                           "dates":f"{st2.strftime('%Y%m%dT%H%M%S')}/{et.strftime('%Y%m%dT%H%M%S')}"}
-                        url="https://calendar.google.com/calendar/render?"+urllib.parse.urlencode(p)
-                        st.markdown(
-                            f'<a href="{url}" target="_blank" '
-                            f'style="text-decoration:none;color:#7c3aed;font-size:.80rem">'
-                            f'+ Stop {si+1}: {nm[:28]}</a>',
-                            unsafe_allow_html=True,
-                        )
+[{",".join(pjs)}].forEach(function(pl){{L.polyline(pl.pts,{{color:pl.c,weight:3,opacity:.6,dashArray:'4 4'}}).addTo(m);}});
+</script></body></html>""").encode("utf-8")
 
 # ══════════════════════════════════════════════════════════════════
-# SIDEBAR — simplified
+# PROGRESS BAR RENDERER
 # ══════════════════════════════════════════════════════════════════
-with st.sidebar:
-    # Language toggle (compact)
-    lang_col1,lang_col2=st.columns(2)
-    with lang_col1:
-        if st.button("EN",key="lang_en",
-                     type="primary" if LANG=="EN" else "secondary",
-                     use_container_width=True):
-            st.session_state["lang_sel"]="EN"; st.rerun()
-    with lang_col2:
-        if st.button("ZH",key="lang_zh",
-                     type="primary" if LANG=="ZH" else "secondary",
-                     use_container_width=True):
-            st.session_state["lang_sel"]="ZH"; st.rerun()
+def render_progress(current_step):
+    steps = [
+        ("✦", "Welcome"),
+        ("◎", "Destination"),
+        ("◈", "Preferences"),
+        ("◉", "Itinerary"),
+    ]
+    circles_html = ""
+    for i, (icon, label) in enumerate(steps):
+        n = i + 1
+        if n < current_step:
+            state = "done"
+            circle_content = "✓"
+        elif n == current_step:
+            state = "active"
+            circle_content = icon
+        else:
+            state = "pending"
+            circle_content = str(n)
 
-    st.markdown("---")
+        circles_html += f"""
+        <div class="progress-step">
+            <div class="step-circle {state}">{circle_content}</div>
+            <div class="step-label {state}">{label}</div>
+        </div>
+        """
+        if i < len(steps) - 1:
+            connector_class = "done-connector" if n < current_step else ""
+            circles_html += f'<div class="step-connector {connector_class}"></div>'
 
-    # Auth (collapsed)
-    if AUTH_OK:
-        with st.expander("Account",expanded=False):
-            render_auth()
+    st.markdown(f"""
+    <div class="progress-bar-outer">
+        <div class="progress-steps">{circles_html}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # ── Destination ──
-    st.markdown('<div class="sb-lbl">Destination</div>',unsafe_allow_html=True)
-    all_c=sorted(WORLD_CITIES.keys())
-    prev_c=st.session_state.get("sel_country","")
-    sel_country=st.selectbox("Country",[""]+all_c,
-                              index=([""] + all_c).index(prev_c) if prev_c in all_c else 0,
-                              key="sel_country",label_visibility="collapsed")
-    sel_city=""
-    if sel_country:
-        co=WORLD_CITIES.get(sel_country,[])
-        pc=st.session_state.get("sel_city_name","")
-        sel_city=st.selectbox("City",co,
-                               index=co.index(pc) if pc in co else 0,
-                               key="sel_city_name",label_visibility="collapsed")
+# ══════════════════════════════════════════════════════════════════
+# STEP 1 — Login / Guest
+# ══════════════════════════════════════════════════════════════════
+def step_1():
+    render_progress(1)
+    st.markdown("""
+    <div class="glass-card">
+      <div class="step-hero-label">Welcome to Voyager</div>
+      <div class="step-hero-title">Your <em>intelligent</em><br>travel companion</div>
+      <div class="step-hero-sub">Plan extraordinary journeys with AI-powered itineraries tailored exclusively to you.</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    city_ov=st.text_input("","",placeholder="Or type any city...",key="city_override")
-    if city_ov.strip():   city_input=city_ov.strip()
-    elif sel_city:        city_input=sel_city
-    elif sel_country:     city_input=sel_country
-    else:                 city_input="Tokyo"
+    col_a, col_b = st.columns(2, gap="medium")
 
-    city_key=city_input.strip().lower()
-    is_cn=city_key in CN_CITIES; intl_d=INTL_CITIES.get(city_key)
-    if is_cn:    city_lat,city_lon=CN_CITIES[city_key]; country="CN"
-    elif intl_d: city_lat,city_lon,country=intl_d[0],intl_d[1],intl_d[2]
-    else:        city_lat=city_lon=None; country=COUNTRY_CODES.get(sel_country,"INT")
+    with col_a:
+        st.markdown("""
+        <div style="background:rgba(124,58,237,0.08);border:1.5px solid rgba(167,139,250,0.2);
+        border-radius:20px;padding:28px;text-align:center;margin-bottom:4px">
+          <div style="font-size:2.2rem;margin-bottom:12px">◉</div>
+          <div style="font-weight:600;font-size:1rem;color:#fff;margin-bottom:6px">Sign In</div>
+          <div style="font-size:0.78rem;color:rgba(255,255,255,0.4);line-height:1.5">
+            Access your saved itineraries, wishlist & travel points
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # ── Optional logistics (collapsed) ──
-    with st.expander("Hotel / Start / End points",expanded=False):
-        hotel_addr =st.text_input("Hotel", "",placeholder="Hotel name or address",key="h_addr")
-        depart_addr=st.text_input("Start","",placeholder="e.g. Tokyo Station",key="d_addr")
-        arrive_addr=st.text_input("End",  "",placeholder="e.g. Narita Airport",key="a_addr")
-
-    st.markdown("---")
-
-    # ── Trip settings ──
-    st.markdown('<div class="sb-lbl">Trip</div>',unsafe_allow_html=True)
-    days=st.number_input("Days",min_value=1,max_value=10,value=3,step=1)
-    ndays=int(days)
-
-    sel_types=st.multiselect("Interests",list(PTYPES.keys()),
-                              default=["🏛️ Attraction","🍜 Restaurant"],
-                              label_visibility="collapsed")
-    if not sel_types: sel_types=["🏛️ Attraction"]
-
-    # Budget (single slider — per day)
-    budget_usd=st.slider("Daily budget",10,500,60,5,format="$%d")
-    cr=fmt_cur(budget_usd,country)
-    st.markdown(
-        f'<div class="info" style="font-size:.74rem;text-align:center">{cr}/day</div>',
-        unsafe_allow_html=True,
-    )
-
-    # ── Day areas (collapsed) ──
-    # Districts
-    dk=f"dists_{city_key}"
-    if dk not in st.session_state:
-        if is_cn:
-            with st.spinner("Loading districts..."):
-                st.session_state[dk]=_amap_districts(city_input)
-        else: st.session_state[dk]=[]
-    amap_dists=st.session_state.get(dk,[])
-    adcode_map:dict={}; center_map:dict={}
-    for d in amap_dists:
-        n,a,la,lo=d.get("name",""),d.get("adcode",""),d.get("lat"),d.get("lon")
-        if n and a: adcode_map[n]=a
-        if n and la is not None: center_map[n]=(la,lo)
-    if is_cn and amap_dists:
-        pdo=["Auto"]+[d["name"] for d in amap_dists]
-    elif intl_d and len(intl_d)>3:
-        pdo=["Auto"]+intl_d[3]
-    else:
-        dnk=f"dyn_{city_key}"
-        if dnk not in st.session_state and city_lat:
-            with st.spinner("Loading areas..."):
-                st.session_state[dnk]=_nom_districts(city_input)
-        dyn=st.session_state.get(dnk,[])
-        pdo=(["Auto"]+dyn) if dyn else ["Auto"]
-
-    with st.expander("Day areas & stops",expanded=False):
-        day_quotas=[]; day_adcodes=[]; day_district_names=[]
-        day_anchor_lats=[]; day_anchor_lons=[]; day_min_ratings=[]
-        day_budgets=[]
-
-        if ndays<=7:
-            tabs=st.tabs([f"D{d+1}" for d in range(ndays)])
-            for di,tab in enumerate(tabs):
-                with tab:
-                    ds=st.selectbox("Area",pdo,key=f"da_{di}",label_visibility="collapsed")
-                    auto=(ds=="Auto")
-                    if auto:
-                        day_adcodes.append(""); day_district_names.append("")
-                        day_anchor_lats.append(city_lat); day_anchor_lons.append(city_lon)
+        if AUTH_OK:
+            with st.form("login_form", clear_on_submit=False):
+                uname = st.text_input("Username", placeholder="Enter username", key="li_u")
+                pw    = st.text_input("Password", type="password", placeholder="Enter password", key="li_p")
+                sub = st.form_submit_button("Sign In →", use_container_width=True)
+                if sub:
+                    if uname and pw:
+                        ok, msg, tok = login_user(uname.strip(), pw)
+                        if ok:
+                            st.session_state["_auth_token"] = tok
+                            st.session_state["user_mode"] = "logged_in"
+                            if POINTS_OK:
+                                try: add_points(uname.strip(), "daily_login")
+                                except Exception: pass
+                            st.session_state["step"] = 2
+                            st.rerun()
+                        else:
+                            st.error(msg)
                     else:
-                        day_adcodes.append(adcode_map.get(ds,""))
-                        day_district_names.append(ds)
-                        dlat,dlon=center_map.get(ds,(city_lat,city_lon))
-                        day_anchor_lats.append(dlat); day_anchor_lons.append(dlon)
-                    mr=st.slider("Min rating",0.,5.,3.5,.5,key=f"mr_{di}")
-                    day_min_ratings.append(mr)
-                    day_budgets.append(budget_usd)
-                    quota={}
-                    for tl in sel_types:
-                        n=st.slider(tl,0,5,1,1,key=f"q_{di}_{tl}")
-                        if n>0: quota[tl]=n
-                    if not quota: quota={sel_types[0]:1}
-                    day_quotas.append(quota)
+                        st.warning("Please enter your credentials.")
+
+            st.markdown('<div style="text-align:center;color:rgba(255,255,255,0.3);font-size:0.75rem;margin:8px 0">New here?</div>', unsafe_allow_html=True)
+            with st.expander("Create Account", expanded=False):
+                with st.form("reg_form"):
+                    ru = st.text_input("Username", placeholder="Choose username", key="re_u")
+                    re_email = st.text_input("Email", placeholder="your@email.com", key="re_e")
+                    rp = st.text_input("Password", type="password", placeholder="Min 6 chars", key="re_p")
+                    rsub = st.form_submit_button("Create Account", use_container_width=True)
+                    if rsub:
+                        ok, msg = register_user(ru.strip(), rp, re_email.strip())
+                        if ok: st.success(msg + " Please sign in.")
+                        else:  st.error(msg)
         else:
-            ds=st.selectbox("Area",pdo,key="da_all",label_visibility="collapsed")
-            auto=(ds=="Auto")
-            _adc="" if auto else adcode_map.get(ds,"")
-            _dn="" if auto else ds
-            _alat,_alon=(center_map.get(ds,(city_lat,city_lon)) if not auto else (city_lat,city_lon))
-            day_adcodes=[_adc]*ndays; day_district_names=[_dn]*ndays
-            day_anchor_lats=[_alat]*ndays; day_anchor_lons=[_alon]*ndays
-            mr=st.slider("Min rating",0.,5.,3.5,.5,key="mr_all")
-            day_min_ratings=[mr]*ndays; day_budgets=[budget_usd]*ndays
-            quota={}
-            for tl in sel_types:
-                n=st.slider(tl,0,5,1,1,key=f"qa_{tl}")
-                if n>0: quota[tl]=n
-            if not quota: quota={sel_types[0]:1}
-            day_quotas=[dict(quota)]*ndays
+            if st.button("Continue as Signed In →", use_container_width=True):
+                st.session_state["user_mode"] = "logged_in"
+                st.session_state["step"] = 2
+                st.rerun()
 
-    total_quota=sum(sum(q.values()) for q in day_quotas) if day_quotas else 4
-    lpt=max(25,total_quota*5)
+    with col_b:
+        st.markdown("""
+        <div style="background:rgba(255,255,255,0.03);border:1.5px solid rgba(255,255,255,0.08);
+        border-radius:20px;padding:28px;text-align:center;margin-bottom:4px">
+          <div style="font-size:2.2rem;margin-bottom:12px">◎</div>
+          <div style="font-weight:600;font-size:1rem;color:#fff;margin-bottom:6px">Continue as Guest</div>
+          <div style="font-size:0.78rem;color:rgba(255,255,255,0.4);line-height:1.5">
+            Jump straight in — no account required. Full planning access.
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.markdown("---")
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-    # ── Build buttons ──
-    if "seed" not in st.session_state: st.session_state.seed=42
-    gen=st.button("Build Itinerary",use_container_width=True,type="primary",key="gen_btn")
-    ref=st.button("Shuffle Places",use_container_width=True,key="ref_btn")
-    if ref:
-        st.session_state.seed=random.randint(1,99999)
-        st.cache_data.clear(); gen=True
-
-    # ── Wishlist (collapsed) ──
-    _su=_cur_user()
-    if _su:
-        with st.expander("Wishlist",expanded=False):
-            render_wishlist_sidebar(_su["username"])
-        if POINTS_OK:
-            with st.expander("Points",expanded=False):
-                try: render_points_panel(_su["username"],LANG)
-                except Exception as _e: st.error(f"Points: {_e}")
-
-    # API status (tiny)
-    st.markdown("---")
-    if is_cn:
-        if AMAP_KEY:
-            st.markdown('<div class="ok" style="font-size:.70rem">&#10003; Amap API connected</div>',
+        # Feature bullets
+        features = ["✦  AI-powered itinerary generation","✦  Real-time place discovery",
+                    "✦  Interactive route mapping","✦  Cost estimation & budgeting",
+                    "✦  Day-by-day schedule"]
+        for f in features:
+            st.markdown(f'<div style="font-size:0.78rem;color:rgba(255,255,255,0.4);padding:5px 0;padding-left:4px">{f}</div>',
                         unsafe_allow_html=True)
-        else:
-            st.markdown(
-                '<div class="warn" style="font-size:.70rem">Amap key missing — add APIKEY in Secrets</div>',
-                unsafe_allow_html=True,
-            )
+
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        if st.button("Explore as Guest →", key="guest_btn", use_container_width=True):
+            st.session_state["user_mode"] = "guest"
+            st.session_state["step"] = 2
+            st.rerun()
+
+# ══════════════════════════════════════════════════════════════════
+# STEP 2 — Destination
+# ══════════════════════════════════════════════════════════════════
+def step_2():
+    render_progress(2)
+
+    user = _cur_user()
+    if user:
+        greeting = f"Welcome back, {user['username']}."
     else:
-        st.caption("Data: OpenStreetMap")
+        greeting = "Where shall we take you?"
 
-# ══════════════════════════════════════════════════════════════════
-# HERO
-# ══════════════════════════════════════════════════════════════════
-st.markdown(
-    f'<div class="hero">'
-    f'<div class="hero-badge">&#10022; AI-Powered Travel</div>'
-    f'<div class="hero-title">Travel Planner</div>'
-    f'<div class="hero-sub">Your intelligent journey companion</div>'
-    f'</div>',
-    unsafe_allow_html=True,
-)
+    st.markdown(f"""
+    <div class="glass-card">
+      <div class="step-hero-label">Step 2 of 4</div>
+      <div class="step-hero-title">Choose your<br><em>destination</em></div>
+      <div class="step-hero-sub">{greeting} Every great journey begins with a destination.</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════
-# MAIN DISPLAY
-# ══════════════════════════════════════════════════════════════════
-def _display(it,df,ci,nd,bud,ctr,tys,lat,lon,hc,dc,ac,d_dist=None):
-    real=sum(len(v) for v in it.values() if isinstance(v,list)) if it else 0
-    avg_r=df["rating"].replace(0,float("nan")).mean()
-    du=round(sum(bud)/len(bud)) if bud else 60
-    bstr=f"${sum(bud)}" if len(set(bud))>1 else f"${du}/day"
+    # Country selector
+    col1, col2 = st.columns([1, 1], gap="medium")
+    all_countries = sorted(WORLD_CITIES.keys())
 
-    for c,(lbl,val) in zip(st.columns(5),[
-        ("Places",str(len(df))),("Days",str(nd)),("Stops",str(real)),
-        ("Avg Rating",f"{avg_r:.1f}" if not math.isnan(avg_r) else "--"),
-        ("Budget",bstr),
-    ]):
-        c.metric(lbl,val)
+    with col1:
+        sel_country = st.selectbox(
+            "Country / Region",
+            [""] + all_countries,
+            index=([""] + all_countries).index(st.session_state.get("dest_country","")) if st.session_state.get("dest_country","") in all_countries else 0,
+            key="s2_country"
+        )
+    with col2:
+        city_override = st.text_input("Or type any city", placeholder="e.g. Kyoto, Cusco, Santorini…", key="s2_city_ov")
 
-    # Save itinerary to wishlist
-    user=_cur_user()
-    if user and it:
-        c1,_=st.columns([1,3])
-        with c1:
-            if st.button(f"♥ Save itinerary",key="save_itin",use_container_width=True):
-                save_itin(user["username"],it,ci,ci.title())
-                st.toast(f"Itinerary for {ci.title()} saved!")
+    # City pills if country selected
+    if sel_country and not city_override:
+        cities = WORLD_CITIES.get(sel_country, [])
+        cur_city = st.session_state.get("dest_city","")
+        st.markdown("<div style='margin-top:4px;font-size:0.72rem;color:rgba(167,139,250,0.6);text-transform:uppercase;letter-spacing:0.06em;font-weight:600'>Select city</div>", unsafe_allow_html=True)
+        # Use clickable buttons in a horizontal flow
+        n_cols = min(len(cities), 5)
+        if n_cols > 0:
+            rows = [cities[i:i+5] for i in range(0, len(cities), 5)]
+            for row in rows:
+                cols = st.columns(len(row))
+                for ci, city in enumerate(row):
+                    with cols[ci]:
+                        selected = (city == cur_city and sel_country == st.session_state.get("dest_country",""))
+                        btn_label = f"✓ {city}" if selected else city
+                        if st.button(btn_label, key=f"cpill_{city}", use_container_width=True):
+                            st.session_state["dest_city"] = city
+                            st.session_state["dest_country"] = sel_country
+                            st.rerun()
 
-    st.markdown(
-        f'<div class="s-lbl">&#128203; {_ss(ci).title()}'
-        f'{"&nbsp;&middot;&nbsp;"+("&nbsp;·&nbsp;".join(_ss(t) for t in tys)) if tys else ""}</div>',
-        unsafe_allow_html=True,
-    )
+    # Popular destinations
+    POPULAR = [
+        ("🗼","Tokyo","Japan"),("🗽","New York","USA"),("🗺️","Paris","France"),
+        ("🏖️","Bali","Indonesia"),("🌆","Dubai","UAE"),("🏰","Rome","Italy"),
+        ("🌸","Kyoto","Japan"),("🎭","London","United Kingdom"),
+        ("🌃","Barcelona","Spain"),("🌴","Bangkok","Thailand"),
+    ]
+    st.markdown("<div style='margin-top:20px;font-size:0.72rem;color:rgba(167,139,250,0.6);text-transform:uppercase;letter-spacing:0.06em;font-weight:600'>Popular destinations</div>", unsafe_allow_html=True)
+    rows_p = [POPULAR[i:i+5] for i in range(0,len(POPULAR),5)]
+    for row in rows_p:
+        cols = st.columns(len(row))
+        for ci, (icon, city, country) in enumerate(row):
+            with cols[ci]:
+                sel = (city == st.session_state.get("dest_city",""))
+                lbl = f"✓ {icon} {city}" if sel else f"{icon} {city}"
+                if st.button(lbl, key=f"pop_{city}", use_container_width=True):
+                    st.session_state["dest_city"] = city
+                    st.session_state["dest_country"] = country
+                    if city_override:
+                        st.session_state["s2_city_ov"] = ""
+                    st.rerun()
 
-    render_table(df,it,bud,ctr,ci,day_districts=d_dist or [""]*nd,sel_types=tys)
-    render_budget(it,bud,ctr,nd)
-
-    if TRANSPORT_OK and it:
-        with st.expander(_t("transport_cmp"),expanded=False):
-            for di,(dl,stops) in enumerate(it.items()):
-                if not isinstance(stops,list) or len(stops)<2: continue
-                du=bud[di] if di<len(bud) else 60
-                st.markdown(f"**{_ss(dl)}**")
-                for si in range(len(stops)-1):
-                    a,b=stops[si],stops[si+1]
-                    if not (a.get("lat") and b.get("lat")): continue
-                    try:
-                        st.markdown(render_transport_comparison(
-                            a["lat"],a["lon"],b["lat"],b["lon"],
-                            _ss(a["name"]),_ss(b["name"]),
-                            country=ctr,city=ci,daily_usd=du,lang=LANG),
-                            unsafe_allow_html=True)
-                    except Exception: pass
-
-    st.markdown(f'<div class="s-lbl">{_t("map_heading")}</div>',unsafe_allow_html=True)
-    st.caption(_t("map_caption"))
-    try:
-        m=build_map(df,lat,lon,it,hc,dc,ac)
-        st_folium(m,width="100%",height=500,returned_objects=[])
-    except Exception as e:
-        st.error(_t("err_map_fail",err=str(e)))
-
-    render_collab()
-    render_export(it,ci,bud,ctr)
-
-# ══════════════════════════════════════════════════════════════════
-# GENERATE
-# ══════════════════════════════════════════════════════════════════
-if gen:
-    if is_cn:
-        lat,lon=city_lat,city_lon
-        if lat is None:
-            c=_amap_geo(city_input)
-            if c: lat,lon=c
-            else: st.error(_t("err_city_nf",city=city_input)); st.stop()
-    elif intl_d:
-        lat,lon=intl_d[0],intl_d[1]
+    # Determine final city
+    if city_override.strip():
+        final_city = city_override.strip()
+        final_country_name = sel_country or ""
+    elif st.session_state.get("dest_city",""):
+        final_city = st.session_state["dest_city"]
+        final_country_name = st.session_state.get("dest_country","")
     else:
-        with st.spinner("Finding destination..."):
-            coord=_nom(city_input)
-            if not coord: st.error(_t("err_city_nf",city=city_input)); st.stop()
-            lat,lon=coord
+        final_city = ""
+        final_country_name = ""
 
-    hotel_c=depart_c=arrive_c=None
-    with st.spinner("Looking up locations..."):
-        if hotel_addr:  hotel_c =_geocode(hotel_addr, city_input,is_cn)
-        if depart_addr: depart_c=_geocode(depart_addr,city_input,is_cn)
-        if arrive_addr: arrive_c=_geocode(arrive_addr,city_input,is_cn)
+    # Show selected
+    if final_city:
+        cc = COUNTRY_CODES.get(final_country_name,"INT")
+        st.markdown(f"""
+        <div style="margin-top:20px;padding:16px 20px;background:rgba(124,58,237,0.1);
+        border:1px solid rgba(167,139,250,0.3);border-radius:14px;
+        display:flex;align-items:center;gap:12px">
+          <div style="font-size:1.5rem">✈️</div>
+          <div>
+            <div style="font-weight:600;color:#fff;font-size:0.95rem">{final_city}</div>
+            <div style="font-size:0.75rem;color:rgba(167,139,250,0.7)">{final_country_name} · {cc}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    with st.spinner(f"Discovering places in {city_input.title()}..."):
+    # Nav
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+    nav_col1, nav_col2 = st.columns([1,1], gap="small")
+    with nav_col1:
+        if st.button("← Back", key="s2_back", use_container_width=True):
+            st.session_state["step"] = 1
+            st.rerun()
+    with nav_col2:
+        if st.button("Next: Preferences →", key="s2_next", use_container_width=True):
+            if not final_city:
+                st.warning("Please select a destination.")
+            else:
+                # Geocode
+                city_key = final_city.strip().lower()
+                cc = COUNTRY_CODES.get(final_country_name,"INT")
+                is_cn = city_key in CN_CITIES
+                intl_d = INTL_CITIES.get(city_key)
+                if is_cn:
+                    lat,lon = CN_CITIES[city_key]
+                elif intl_d:
+                    lat,lon = intl_d[0],intl_d[1]
+                    cc = intl_d[2]
+                else:
+                    with st.spinner("Locating destination…"):
+                        coord = _nom(final_city)
+                        if not coord:
+                            st.error(f"Could not find '{final_city}'. Please try a different spelling.")
+                            st.stop()
+                        lat,lon = coord
+
+                st.session_state["dest_city"] = final_city
+                st.session_state["dest_country"] = final_country_name
+                st.session_state["dest_lat"] = lat
+                st.session_state["dest_lon"] = lon
+                st.session_state["dest_country_code"] = cc
+                st.session_state["dest_is_cn"] = is_cn
+                st.session_state["step"] = 3
+                st.rerun()
+
+# ══════════════════════════════════════════════════════════════════
+# STEP 3 — Preferences
+# ══════════════════════════════════════════════════════════════════
+def step_3():
+    render_progress(3)
+
+    city  = st.session_state.get("dest_city","Your City")
+    cc    = st.session_state.get("dest_country_code","INT")
+
+    st.markdown(f"""
+    <div class="glass-card">
+      <div class="step-hero-label">Step 3 of 4</div>
+      <div class="step-hero-title">Craft your<br><em>experience</em></div>
+      <div class="step-hero-sub">Tell us how you like to travel and we'll build a perfectly curated itinerary for {city}.</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2, gap="medium")
+
+    with col1:
+        st.markdown('<div style="font-size:0.72rem;color:rgba(167,139,250,0.7);text-transform:uppercase;letter-spacing:0.06em;font-weight:600;margin-bottom:8px">Trip Duration</div>', unsafe_allow_html=True)
+        days = st.number_input("Number of days", min_value=1, max_value=10, value=st.session_state.get("trip_days",3), step=1, key="s3_days", label_visibility="collapsed")
+
+        st.markdown('<div style="font-size:0.72rem;color:rgba(167,139,250,0.7);text-transform:uppercase;letter-spacing:0.06em;font-weight:600;margin:20px 0 8px">Daily Budget (USD)</div>', unsafe_allow_html=True)
+        budget = st.slider("Daily budget", 10, 500, st.session_state.get("trip_budget",80), 5, format="$%d", key="s3_budget", label_visibility="collapsed")
+
+        sym, rate = _local_rate(cc)
+        local_amt = round(budget * rate)
+        st.markdown(f'<div style="font-size:0.78rem;color:rgba(167,139,250,0.5);margin-top:4px">${budget} USD ≈ {sym}{local_amt:,} per day</div>', unsafe_allow_html=True)
+
+        st.markdown('<div style="font-size:0.72rem;color:rgba(167,139,250,0.7);text-transform:uppercase;letter-spacing:0.06em;font-weight:600;margin:20px 0 8px">Start Point (Optional)</div>', unsafe_allow_html=True)
+        depart_addr = st.text_input("Start point", placeholder="e.g. Tokyo Station, Airport…", key="s3_depart", label_visibility="collapsed")
+        arrive_addr = st.text_input("End point", placeholder="e.g. Narita Airport…", key="s3_arrive", label_visibility="collapsed")
+        hotel_addr  = st.text_input("Hotel / Accommodation", placeholder="Hotel name or address…", key="s3_hotel", label_visibility="collapsed")
+
+    with col2:
+        st.markdown('<div style="font-size:0.72rem;color:rgba(167,139,250,0.7);text-transform:uppercase;letter-spacing:0.06em;font-weight:600;margin-bottom:8px">What do you love?</div>', unsafe_allow_html=True)
+
+        type_options = list(PTYPES.keys())
+        prev_types = st.session_state.get("trip_types", ["🏛️ Attraction","🍜 Restaurant"])
+
+        # Grid of toggleable type buttons
+        selected_types = list(prev_types)
+        rows_t = [type_options[i:i+2] for i in range(0,len(type_options),2)]
+        for row in rows_t:
+            tcols = st.columns(len(row))
+            for tci, tl in enumerate(row):
+                with tcols[tci]:
+                    is_sel = tl in selected_types
+                    color = PTYPES[tl]["color"]
+                    label_txt = f"✓ {tl}" if is_sel else tl
+                    if st.button(label_txt, key=f"type_{tl}", use_container_width=True):
+                        if is_sel and len(selected_types) > 1:
+                            selected_types.remove(tl)
+                        elif not is_sel:
+                            selected_types.append(tl)
+                        st.session_state["trip_types"] = selected_types
+                        st.rerun()
+
+        st.markdown('<div style="font-size:0.72rem;color:rgba(167,139,250,0.7);text-transform:uppercase;letter-spacing:0.06em;font-weight:600;margin:20px 0 8px">Stops per day (each type)</div>', unsafe_allow_html=True)
+        quotas = {}
+        for tl in selected_types:
+            prev_q = (st.session_state.get("trip_quotas") or {}).get(tl, 1)
+            n = st.slider(f"{tl}", 0, 4, prev_q, 1, key=f"quota_{tl}")
+            if n > 0: quotas[tl] = n
+        if not quotas and selected_types:
+            quotas = {selected_types[0]: 1}
+
+    # Nav
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+    nav_c1, nav_c2 = st.columns([1,1], gap="small")
+    with nav_c1:
+        if st.button("← Back", key="s3_back", use_container_width=True):
+            st.session_state["step"] = 2
+            st.rerun()
+    with nav_c2:
+        if st.button("Build My Itinerary ✦", key="s3_next", use_container_width=True):
+            st.session_state["trip_days"] = int(days)
+            st.session_state["trip_budget"] = int(budget)
+            st.session_state["trip_types"] = selected_types
+            st.session_state["trip_quotas"] = quotas
+            st.session_state["trip_depart"] = depart_addr.strip()
+            st.session_state["trip_arrive"] = arrive_addr.strip()
+            st.session_state["trip_hotel"]  = hotel_addr.strip()
+            st.session_state["day_budgets"] = [int(budget)] * int(days)
+
+            # Generate itinerary
+            _generate_itinerary()
+
+# ══════════════════════════════════════════════════════════════════
+# ITINERARY GENERATION
+# ══════════════════════════════════════════════════════════════════
+def _generate_itinerary():
+    city    = st.session_state["dest_city"]
+    lat     = st.session_state["dest_lat"]
+    lon     = st.session_state["dest_lon"]
+    country = st.session_state["dest_country_code"]
+    is_cn   = st.session_state.get("dest_is_cn", False)
+    ndays   = st.session_state["trip_days"]
+    budget  = st.session_state["trip_budget"]
+    types   = st.session_state["trip_types"]
+    quotas  = st.session_state["trip_quotas"]
+    day_budgets = [budget] * ndays
+    seed    = st.session_state.get("seed", 42)
+
+    total_q = sum(quotas.values()) if quotas else 4
+    lpt = max(20, total_q * 5)
+
+    with st.spinner(f"Discovering places in {city}…"):
         try:
-            df,warn=fetch_places(
-                lat,lon,country,is_cn,
-                tuple(sel_types),lpt,
-                tuple(day_adcodes),tuple(day_district_names),
-                tuple(day_anchor_lats),tuple(day_anchor_lons),
-                st.session_state.seed,
-            )
-        except Exception as e: st.error(f"Search error: {e}"); st.stop()
+            df, warn = fetch_places(lat, lon, country, is_cn, tuple(types), lpt, seed)
+        except Exception as e:
+            st.error(f"Place search error: {e}")
+            return
 
-    if warn: st.markdown(f'<div class="warn">{warn}</div>',unsafe_allow_html=True)
-    if df is None or df.empty: st.error(_t("err_no_places")); st.stop()
+    if warn:
+        st.info(warn)
 
-    itinerary={}
-    if not AI_OK:
-        st.error(f"ai_planner error: {_AI_ERR}")
-    else:
-        with st.spinner("Crafting your itinerary..."):
+    if df is None or df.empty:
+        st.error("No places found. Please try a different city or types.")
+        return
+
+    # Geocode start/end/hotel
+    depart_c = arrive_c = hotel_c = None
+    depart_addr = st.session_state.get("trip_depart","")
+    arrive_addr = st.session_state.get("trip_arrive","")
+    hotel_addr  = st.session_state.get("trip_hotel","")
+
+    def _gc(addr):
+        if not addr: return None
+        if is_cn: return _amap_geo(f"{addr} {city}") or _nom(f"{addr} {city}")
+        return _nom(f"{addr} {city}") or _nom(addr)
+
+    with st.spinner("Looking up locations…"):
+        if hotel_addr:  hotel_c  = _gc(hotel_addr)
+        if depart_addr: depart_c = _gc(depart_addr)
+        if arrive_addr: arrive_c = _gc(arrive_addr)
+
+    itinerary = {}
+    if AI_OK:
+        day_quotas = [dict(quotas)] * ndays
+        with st.spinner("Crafting your itinerary…"):
             try:
-                itinerary=generate_itinerary(
-                    df,ndays,day_quotas,
+                itinerary = generate_itinerary(
+                    df, ndays, day_quotas,
                     hotel_lat  =hotel_c[0]  if hotel_c  else None,
                     hotel_lon  =hotel_c[1]  if hotel_c  else None,
                     depart_lat =depart_c[0] if depart_c else None,
                     depart_lon =depart_c[1] if depart_c else None,
                     arrive_lat =arrive_c[0] if arrive_c else None,
                     arrive_lon =arrive_c[1] if arrive_c else None,
-                    day_min_ratings=day_min_ratings,
-                    day_anchor_lats=day_anchor_lats,
-                    day_anchor_lons=day_anchor_lons,
-                    country=country,city=city_input,
+                    day_min_ratings=[3.5]*ndays,
+                    day_anchor_lats=[lat]*ndays,
+                    day_anchor_lons=[lon]*ndays,
+                    country=country, city=city,
                     day_budgets=day_budgets,
                 )
             except Exception as e:
-                st.error(_t("err_itin_fail",err=str(e)))
+                st.error(f"Itinerary error: {e}")
+    else:
+        # Fallback: simple assignment
+        used = set(); d_idx = 0
+        for d in range(ndays):
+            day_key = f"Day {d+1}"; stops = []
+            for tl, cnt in (quotas or {}).items():
+                pool = df[(df["type_label"]==tl)&(~df["name"].isin(used))].head(cnt)
+                for _,row in pool.iterrows():
+                    stops.append(row.to_dict()); used.add(row["name"])
+            itinerary[day_key] = stops
 
-    if itinerary:
-        st.session_state.update({
-            "_itin":itinerary,"_df":df,"_city":city_input,
-            "_ndays":ndays,"_budgets":day_budgets,"_country":country,
-            "_types":list(sel_types),"_lat":lat,"_lon":lon,
-            "_hotel":hotel_c,"_depart":depart_c,"_arrive":arrive_c,
-            "_lang":LANG,"_districts":list(day_district_names),
-        })
-        user=_cur_user()
-        if user:
-            save_itin(user["username"],itinerary,city_input,city_input.title())
-            if POINTS_OK:
-                try: add_points(user["username"],"share",note=city_input)
-                except Exception: pass
+    st.session_state["_itin"] = itinerary
+    st.session_state["_df"]   = df
+    st.session_state["_hotel_c"]  = hotel_c
+    st.session_state["_depart_c"] = depart_c
+    st.session_state["_arrive_c"] = arrive_c
+    st.session_state["day_budgets"] = day_budgets
 
-    _display(itinerary,df,city_input,ndays,day_budgets,country,
-             sel_types,lat,lon,hotel_c,depart_c,arrive_c,
-             d_dist=day_district_names)
+    # Save for logged-in user
+    user = _cur_user()
+    if user and itinerary:
+        save_itin_fn(user["username"], itinerary, city, city.title())
+        if POINTS_OK:
+            try: add_points(user["username"],"share",note=city)
+            except Exception: pass
 
-elif "_itin" in st.session_state and "_df" in st.session_state:
-    _display(
-        st.session_state["_itin"],
-        st.session_state["_df"],
-        st.session_state.get("_city",    city_input),
-        st.session_state.get("_ndays",   ndays),
-        st.session_state.get("_budgets", day_budgets),
-        st.session_state.get("_country", country),
-        st.session_state.get("_types",   list(sel_types)),
-        st.session_state.get("_lat",     city_lat or 35.),
-        st.session_state.get("_lon",     city_lon or 139.),
-        st.session_state.get("_hotel"),
-        st.session_state.get("_depart"),
-        st.session_state.get("_arrive"),
-        d_dist=st.session_state.get("_districts",[""] * ndays),
-    )
+    st.session_state["step"] = 4
+    st.rerun()
 
+# ══════════════════════════════════════════════════════════════════
+# STEP 4 — Itinerary View
+# ══════════════════════════════════════════════════════════════════
+def step_4():
+    render_progress(4)
+
+    city        = st.session_state.get("dest_city","")
+    country     = st.session_state.get("dest_country_code","INT")
+    lat         = st.session_state.get("dest_lat",35.)
+    lon         = st.session_state.get("dest_lon",139.)
+    ndays       = st.session_state.get("trip_days",3)
+    day_budgets = st.session_state.get("day_budgets",[60]*ndays)
+    itinerary   = st.session_state.get("_itin",{})
+    df          = st.session_state.get("_df",pd.DataFrame())
+    user        = _cur_user()
+
+    total_stops = sum(len(v) for v in itinerary.values() if isinstance(v,list))
+    avg_rating  = df["rating"].replace(0,float("nan")).mean() if df is not None and not df.empty else 0
+    total_budget = sum(day_budgets[:len(itinerary)]) if day_budgets else 0
+
+    # Hero
+    st.markdown(f"""
+    <div class="glass-card" style="margin-bottom:0">
+      <div class="step-hero-label">Your Journey</div>
+      <div class="step-hero-title">{city.title()}</div>
+      <div class="step-hero-sub">AI-curated across {ndays} days · {total_stops} handpicked stops</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Metrics row
+    m1,m2,m3,m4,m5 = st.columns(5)
+    m1.metric("📍 Places",  str(len(df)) if df is not None else "0")
+    m2.metric("📅 Days",    str(ndays))
+    m3.metric("🗓️ Stops",  str(total_stops))
+    m4.metric("⭐ Avg",     f"{avg_rating:.1f}" if avg_rating else "—")
+    m5.metric("💰 Total",   f"${total_budget}")
+
+    # Action bar
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    ab1, ab2, ab3, ab4 = st.columns(4)
+    with ab1:
+        if st.button("← Edit Preferences", key="s4_back", use_container_width=True):
+            st.session_state["step"] = 3
+            st.rerun()
+    with ab2:
+        if st.button("🔀 Shuffle & Rebuild", key="s4_shuffle", use_container_width=True):
+            st.session_state["seed"] = random.randint(1,99999)
+            st.cache_data.clear()
+            st.session_state["step"] = 3
+            _generate_itinerary()
+    with ab3:
+        if user and st.button("♥ Save Itinerary", key="s4_save", use_container_width=True):
+            save_itin_fn(user["username"], itinerary, city, city.title())
+            st.toast(f"Itinerary for {city.title()} saved!")
+    with ab4:
+        if itinerary:
+            try:
+                html_data = build_html(itinerary, city, day_budgets, country)
+                st.download_button("⬇️ Export HTML", data=html_data,
+                    file_name=f"voyager_{city.lower().replace(' ','_')}.html",
+                    mime="text/html;charset=utf-8", use_container_width=True)
+            except Exception:
+                st.button("⬇️ Export", disabled=True, use_container_width=True)
+
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+    # Main tabs
+    tab_itin, tab_map, tab_budget, tab_ai, tab_explore = st.tabs([
+        "📋 Itinerary", "🗺️ Map", "💰 Budget", "✦ AI Picks", "🔍 Explore More"
+    ])
+
+    with tab_itin:
+        _render_itinerary_tab(itinerary, df, day_budgets, country, city, user)
+
+    with tab_map:
+        _render_map_tab(df, lat, lon, itinerary)
+
+    with tab_budget:
+        _render_budget_tab(itinerary, day_budgets, country, ndays)
+
+    with tab_ai:
+        _render_ai_tab(city, country, ndays, st.session_state.get("trip_types",[]), itinerary)
+
+    with tab_explore:
+        _render_explore_tab(df, itinerary, day_budgets, country, user)
+
+# ── Itinerary Tab ─────────────────────────────────────────────────
+def _render_itinerary_tab(itinerary, df, day_budgets, country, city, user):
+    if not itinerary:
+        st.info("No itinerary generated yet.")
+        return
+
+    if isinstance(day_budgets, int): day_budgets=[day_budgets]*30
+    current_itin = st.session_state.get("_itin", itinerary)
+
+    for di, (day_key, stops) in enumerate(current_itin.items()):
+        if not isinstance(stops, list): continue
+        color = DAY_COLORS[di % len(DAY_COLORS)]
+        d_usd = day_budgets[di] if di < len(day_budgets) else day_budgets[-1]
+        tl_stops = build_timeline(stops)
+        total_dur = sum(s.get("duration_min",60) for s in tl_stops)
+
+        is_expanded = st.session_state.get(f"exp_{day_key}", di==0)
+
+        # Day header card
+        exp_icon = "▲" if is_expanded else "▼"
+        st.markdown(f"""
+        <div style="background:rgba(255,255,255,0.04);border:1.5px solid rgba(255,255,255,0.08);
+        border-left:3px solid {color};border-radius:16px;padding:18px 22px;margin:10px 0 6px;
+        cursor:pointer;position:relative;overflow:hidden">
+          <div style="position:absolute;top:0;left:0;right:0;height:1px;
+          background:linear-gradient(90deg,{color},transparent)"></div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:36px;height:36px;border-radius:50%;background:{color}22;
+            border:1.5px solid {color}66;display:flex;align-items:center;justify-content:center;
+            font-size:0.8rem;font-weight:700;color:{color}">{di+1}</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:0.95rem;color:#fff">{day_key}</div>
+              <div style="font-size:0.72rem;color:rgba(255,255,255,0.4);margin-top:2px">
+                {len(stops)} stops · ${d_usd}/day · ~{format_duration(total_dur)}
+              </div>
+            </div>
+            <div style="font-size:0.72rem;color:rgba(167,139,250,0.5)">{exp_icon} Details</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        toggle_col, _ = st.columns([1,5])
+        with toggle_col:
+            if st.button(f"{'Collapse' if is_expanded else 'Expand'} {day_key}", key=f"toggle_{day_key}", use_container_width=True):
+                st.session_state[f"exp_{day_key}"] = not is_expanded
+                st.rerun()
+
+        if is_expanded:
+            # Timeline of stops
+            for si, s in enumerate(tl_stops):
+                nm   = _ss(s.get("name",""))
+                tl   = _ss(s.get("type_label",""))
+                rat  = s.get("rating",0)
+                dist = _ss(s.get("district",""))
+                arr  = s.get("arrive_time","")
+                dep  = s.get("depart_time","")
+                dur  = s.get("duration_min",60)
+                tr   = s.get("transport_to_next") or {}
+                _, cs = cost_est(tl, d_usd, country)
+
+                with st.container():
+                    sc1, sc2, sc3, sc4 = st.columns([1,5,3,1])
+
+                    with sc1:
+                        st.markdown(f"""
+                        <div style="text-align:center;padding-top:6px">
+                          <div style="width:28px;height:28px;border-radius:50%;
+                          background:linear-gradient(135deg,{color},{color}88);
+                          display:flex;align-items:center;justify-content:center;
+                          color:#fff;font-size:11px;font-weight:700;margin:auto">{si+1}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    with sc2:
+                        st.markdown(f"""
+                        <div style="padding:8px 0">
+                          <div style="font-weight:600;font-size:0.88rem;color:#fff">{nm}</div>
+                          <div style="font-size:0.72rem;color:rgba(255,255,255,0.4);margin-top:2px">
+                            {tl}{'&nbsp;·&nbsp;⭐ '+str(rat) if rat else ''}{'&nbsp;·&nbsp;'+dist if dist else ''}
+                          </div>
+                          <div style="font-size:0.70rem;color:rgba(167,139,250,0.6);margin-top:3px">💰 {cs}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    with sc3:
+                        time_html = '<div style="padding:8px 0">'
+                        if arr:
+                            time_html += f'<span class="time-chip">⏰ {arr}–{dep}</span>'
+                        time_html += f'<div style="margin-top:4px"><span style="font-size:0.70rem;color:rgba(245,158,11,0.7)">⏱ {format_duration(dur)}</span></div>'
+                        if tr:
+                            time_html += f'<div style="margin-top:3px"><span class="tr-chip">🚇 {_ss(tr.get("mode",""))} · {_ss(tr.get("duration",""))}</span></div>'
+                        time_html += '</div>'
+                        st.markdown(time_html, unsafe_allow_html=True)
+
+                    with sc4:
+                        # Swap button
+                        sw_key = f"_sw_{day_key}_{si}"
+                        sw_open = st.session_state.get(sw_key, False)
+                        if st.button("↔" if not sw_open else "✕", key=f"sw_{day_key}_{si}", help="Swap stop"):
+                            st.session_state[sw_key] = not sw_open
+                            st.rerun()
+                        if user:
+                            if st.button("♡" if not wl_check(user["username"],nm) else "♥",
+                                         key=f"wl_{day_key}_{si}_{nm[:4]}"):
+                                if wl_check(user["username"],nm):
+                                    wl_remove(user["username"],nm); st.toast(f"Removed {nm}")
+                                else:
+                                    wl_add(user["username"],{"name":nm,"lat":s.get("lat",0),"lon":s.get("lon",0),
+                                                              "type_label":tl,"rating":rat,"address":s.get("address","")})
+                                    st.toast(f"Saved {nm}!")
+                                st.rerun()
+
+                # Swap panel
+                if st.session_state.get(f"_sw_{day_key}_{si}", False):
+                    _render_swap(current_itin, df if df is not None else pd.DataFrame(), day_key, si)
+
+                st.markdown('<div style="height:1px;background:rgba(255,255,255,0.04);margin:2px 8px"></div>', unsafe_allow_html=True)
+
+            # Reorder stops
+            with st.expander(f"↕️ Reorder stops in {day_key}", expanded=False):
+                stops_list = list(current_itin.get(day_key,[]))
+                if len(stops_list) > 1:
+                    st.markdown('<div class="reorder-hint">Move stops up or down to reorder your day</div>', unsafe_allow_html=True)
+                    for si, s in enumerate(stops_list):
+                        nm = _ss(s.get("name",""))
+                        rc1,rc2,rc3 = st.columns([5,1,1])
+                        with rc1:
+                            st.markdown(f'<div style="font-size:0.83rem;color:#fff;padding:6px 0">{si+1}. {nm}</div>', unsafe_allow_html=True)
+                        with rc2:
+                            if si > 0 and st.button("↑", key=f"up_{day_key}_{si}"):
+                                stops_list[si], stops_list[si-1] = stops_list[si-1], stops_list[si]
+                                new_itin = dict(current_itin); new_itin[day_key] = stops_list
+                                st.session_state["_itin"] = new_itin; st.rerun()
+                        with rc3:
+                            if si < len(stops_list)-1 and st.button("↓", key=f"dn_{day_key}_{si}"):
+                                stops_list[si], stops_list[si+1] = stops_list[si+1], stops_list[si]
+                                new_itin = dict(current_itin); new_itin[day_key] = stops_list
+                                st.session_state["_itin"] = new_itin; st.rerun()
+
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+# ── Swap Panel ────────────────────────────────────────────────────
+def _render_swap(itinerary, df, day_key, stop_idx):
+    stops = itinerary.get(day_key,[])
+    if not isinstance(stops,list) or stop_idx>=len(stops): return
+    cur = stops[stop_idx]; cur_type = cur.get("type_label","")
+    used = {s["name"] for sl in itinerary.values() if isinstance(sl,list) for s in sl}
+
+    if df.empty:
+        st.warning("No alternatives available."); return
+
+    cands = (df[(df["type_label"]==cur_type)&(~df["name"].isin(used))]
+             .sort_values("rating",ascending=False).head(4))
+
+    st.markdown(f"""
+    <div style="background:rgba(124,58,237,0.08);border:1px solid rgba(167,139,250,0.2);
+    border-radius:14px;padding:16px;margin:6px 0">
+      <div style="font-weight:600;font-size:0.82rem;color:#c4b5fd;margin-bottom:10px">
+        Swap: <span style="color:#fff">{_ss(cur.get('name',''))}</span>
+      </div>
+    """, unsafe_allow_html=True)
+
+    if cands.empty:
+        st.markdown('<div style="color:rgba(255,255,255,0.4);font-size:0.78rem">No alternatives found for this type.</div>', unsafe_allow_html=True)
+    else:
+        cols = st.columns(min(len(cands),4))
+        for i,(_,alt) in enumerate(cands.iterrows()):
+            with cols[i%4]:
+                nm = _ss(alt["name"]); rat = alt.get("rating",0)
+                dur = estimate_duration(nm, alt.get("type_label",""))
+                st.markdown(f"""
+                <div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:10px;
+                border:1px solid rgba(255,255,255,0.08);margin-bottom:6px">
+                  <div style="font-weight:600;font-size:0.79rem;color:#fff">{nm}</div>
+                  <div style="font-size:0.68rem;color:rgba(255,255,255,0.4)">⭐ {rat} · {format_duration(dur)}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("Select", key=f"swc_{day_key}_{stop_idx}_{nm[:6]}", use_container_width=True):
+                    new_it = dict(st.session_state.get("_itin", itinerary))
+                    ds = list(new_it.get(day_key,[])); ds[stop_idx] = alt.to_dict()
+                    new_it[day_key] = ds
+                    st.session_state["_itin"] = new_it
+                    st.session_state.pop(f"_sw_{day_key}_{stop_idx}", None)
+                    st.toast(f"Replaced with {nm}"); st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    if st.button("Cancel swap", key=f"swcancel_{day_key}_{stop_idx}"):
+        st.session_state.pop(f"_sw_{day_key}_{stop_idx}", None); st.rerun()
+
+# ── Map Tab ───────────────────────────────────────────────────────
+def _render_map_tab(df, lat, lon, itinerary):
+    if not FOLIUM_OK:
+        st.info("Install streamlit-folium for interactive maps.")
+        return
+    st.caption("Dark-mode route map · Tap markers for details")
+    try:
+        m = build_map(df, lat, lon, itinerary)
+        if m:
+            st.markdown('<div class="map-wrap">', unsafe_allow_html=True)
+            st_folium(m, width="100%", height=520, returned_objects=[])
+            st.markdown("</div>", unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Map error: {e}")
+
+# ── Budget Tab ────────────────────────────────────────────────────
+def _render_budget_tab(itinerary, day_budgets, country, ndays):
+    if not itinerary: return
+    if isinstance(day_budgets,int): day_budgets=[day_budgets]*ndays
+    sym, rate = _local_rate(country)
+    tots=[]
+    for di,(dl,stops) in enumerate(itinerary.items()):
+        if not isinstance(stops,list) or not stops: continue
+        du = day_budgets[di] if di<len(day_budgets) else day_budgets[-1]
+        t = sum(cost_est(s.get("type_label",""),du,country)[0] for s in stops)
+        tots.append((dl,t,du))
+    if not tots: return
+
+    gt = sum(t for _,t,_ in tots)
+    gb = sum(d for _,_,d in tots)
+
+    # Budget grid
+    st.markdown('<div class="budget-grid">', unsafe_allow_html=True)
+    for dl,t,du in tots:
+        over = t > du*1.1
+        lo_u=round(t*.8); hi_u=round(t*1.2)
+        rng = f"${lo_u}-${hi_u}"
+        flag = "⚠️" if over else "✓"
+        st.markdown(f"""
+        <div class="budget-cell" style="{'border-color:rgba(239,68,68,0.3)' if over else ''}">
+          <div class="budget-lbl">{_ss(dl)}</div>
+          <div class="budget-amt">${round(t)}{' !' if over else ''}</div>
+          <div class="budget-sub">{rng}</div>
+          <div class="budget-sub">${du}/day {flag}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Total card
+    lo=round(gt*.8); hi=round(gt*1.2)
+    gs = f"${lo}–${hi}"
+    if country!="US":
+        gs += f" ({sym}{round(lo*rate)}–{sym}{round(hi*rate)})"
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,rgba(124,58,237,0.12),rgba(147,51,234,0.08));
+    border:1.5px solid rgba(167,139,250,0.25);border-radius:18px;padding:24px;text-align:center;margin:12px 0">
+      <div style="font-size:0.68rem;color:rgba(167,139,250,0.7);text-transform:uppercase;letter-spacing:0.1em;font-weight:600;margin-bottom:8px">TOTAL ESTIMATED COST</div>
+      <div style="font-size:2.2rem;font-weight:700;color:#fff;letter-spacing:-0.03em">${round(gt)}</div>
+      <div style="font-size:0.82rem;color:rgba(255,255,255,0.4);margin-top:6px">{gs}</div>
+      <div style="font-size:0.72rem;color:rgba(167,139,250,0.5);margin-top:4px">{ndays if ndays else len(tots)}d · ${gb} budget · per person</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.expander("📊 Full cost breakdown", expanded=False):
+        rows=[]
+        for di,(dl,stops) in enumerate(itinerary.items()):
+            if not isinstance(stops,list): continue
+            du = day_budgets[di] if di<len(day_budgets) else day_budgets[-1]
+            for s in stops:
+                tl=s.get("type_label",""); _,cr=cost_est(tl,du,country)
+                dur=estimate_duration(_ss(s.get("name","")),tl)
+                rows.append({"Day":_ss(dl),"Place":_ss(s.get("name","")),"Type":tl,
+                              "Duration":format_duration(dur),"Est. Cost":cr})
+        if rows: st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+
+    # Google Calendar export
+    with st.expander("📅 Add to Google Calendar", expanded=False):
+        sd = st.date_input("Trip start date", key="cal_date")
+        if sd and itinerary:
+            import urllib.parse
+            bd = datetime.combine(sd, datetime.min.time())
+            SM={"9:00 AM":(9,0),"10:30 AM":(10,30),"12:00 PM":(12,0),"1:30 PM":(13,30),
+                "3:00 PM":(15,0),"4:30 PM":(16,30),"6:00 PM":(18,0),"7:30 PM":(19,30)}
+            for di,(dl,stops) in enumerate(itinerary.items()):
+                if not isinstance(stops,list): continue
+                st.markdown(f"**{_ss(dl)}**")
+                for si,s in enumerate(stops):
+                    nm=_ss(s.get("name","Stop"))
+                    hh,mm=SM.get(s.get("time_slot","9:00 AM"),(9+si,0))
+                    dd=bd+timedelta(days=di)
+                    st2=dd.replace(hour=min(hh,23),minute=mm,second=0)
+                    et=st2+timedelta(hours=1,minutes=30)
+                    p={"action":"TEMPLATE","text":f"{nm} ({st.session_state.get('dest_city','').title()})",
+                       "dates":f"{st2.strftime('%Y%m%dT%H%M%S')}/{et.strftime('%Y%m%dT%H%M%S')}"}
+                    url="https://calendar.google.com/calendar/render?"+urllib.parse.urlencode(p)
+                    st.markdown(f'<a href="{url}" target="_blank" style="color:#c4b5fd;font-size:.80rem;text-decoration:none">+ {nm[:35]}</a>', unsafe_allow_html=True)
+
+# ── AI Picks Tab ──────────────────────────────────────────────────
+def _render_ai_tab(city, country, ndays, sel_types, itinerary):
+    picks = get_ai_mustsee(city, country, ndays, tuple(sel_types))
+    if not picks:
+        st.info("AI recommendations unavailable for this city.")
+        return
+
+    existing = {s.get("name","") for stops in itinerary.values()
+                if isinstance(stops,list) for s in stops}
+    current_itin = st.session_state.get("_itin", itinerary)
+    day_keys = list(current_itin.keys())
+
+    st.markdown(f"""
+    <div class="ai-panel">
+      <div style="font-weight:700;font-size:0.88rem;color:#c4b5fd;margin-bottom:4px">✦ AI Must-See Picks</div>
+      <div style="font-size:0.72rem;color:rgba(167,139,250,0.5);margin-bottom:14px">
+        {"AI-powered" if DEEPSEEK_KEY else "Curated"} highlights for {city}
+      </div>
+    """, unsafe_allow_html=True)
+
+    rows_ai = [picks[i:i+3] for i in range(0,len(picks),3)]
+    for row in rows_ai:
+        cols = st.columns(len(row))
+        for ci, rec in enumerate(row):
+            with cols[ci]:
+                nm = _ss(rec.get("name",""))
+                tp = _ss(rec.get("type",""))
+                why = _ss(rec.get("why",""))
+                rat = rec.get("rating",4.5)
+                dur = rec.get("duration_min",60)
+                already = nm in existing
+
+                st.markdown(f"""
+                <div class="ai-item">
+                  <div style="font-weight:600;font-size:0.83rem;color:#fff">{nm}</div>
+                  <div style="color:#a78bfa;font-size:0.70rem;margin-top:2px">{tp}</div>
+                  <div style="color:rgba(255,255,255,0.4);font-size:0.73rem;margin-top:4px">{why}</div>
+                  <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+                    <span style="font-size:0.68rem;color:#c4b5fd">⭐ {rat}</span>
+                    <span style="font-size:0.68rem;color:rgba(245,158,11,0.7)">⏱ {format_duration(dur)}</span>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if already:
+                    st.markdown('<div style="font-size:0.70rem;color:#34d399;margin-top:4px">✓ In itinerary</div>', unsafe_allow_html=True)
+                elif day_keys:
+                    sel_day = st.selectbox("Add to:", ["Choose day…"]+day_keys,
+                                           key=f"ai_day_{nm[:8]}_{ci}", label_visibility="collapsed")
+                    if sel_day != "Choose day…":
+                        if st.button("+ Add", key=f"ai_add_{nm[:8]}_{ci}", use_container_width=True):
+                            pd_ = {"name":nm,"lat":rec.get("lat",0),"lon":rec.get("lon",0),
+                                   "type_label":tp,"rating":rat,"address":"","district":"","description":why}
+                            stops_list = list(current_itin.get(sel_day,[]))
+                            if nm not in {s.get("name","") for s in stops_list}:
+                                stops_list.append({**pd_,"time_slot":"TBD","transport_to_next":None})
+                                new_itin = dict(current_itin); new_itin[sel_day]=stops_list
+                                st.session_state["_itin"]=new_itin
+                                st.toast(f"Added {nm}!"); st.rerun()
+                            else:
+                                st.toast("Already in itinerary!", icon="ℹ️")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ── Explore Tab ───────────────────────────────────────────────────
+def _render_explore_tab(df, itinerary, day_budgets, country, user):
+    if df is None or df.empty:
+        st.info("No additional places to explore.")
+        return
+    if isinstance(day_budgets,int): day_budgets=[day_budgets]*30
+    avg = round(sum(day_budgets)/len(day_budgets)) if day_budgets else 60
+    current_itin = st.session_state.get("_itin", itinerary)
+    day_keys = list(current_itin.keys())
+    snames = {s.get("name","") for stops in current_itin.values()
+              if isinstance(stops,list) for s in stops}
+    unscheduled = [row for _,row in df.iterrows() if row["name"] not in snames]
+    if not unscheduled:
+        st.info("All discovered places are already in your itinerary! Try shuffling for new options.")
+        return
+
+    CATS=[("Attractions",["🏛️ Attraction"]),("Dining",["🍜 Restaurant","☕ Cafe"]),
+          ("Nature",["🌿 Park"]),("Shopping",["🛍️ Shopping"]),("Nightlife",["🍺 Bar/Nightlife"])]
+    by_type={}
+    for r in unscheduled:
+        tl=r.get("type_label","") or r.get("type","")
+        by_type.setdefault(tl,[]).append(r)
+    cat_data=[]
+    covered=set()
+    for cn,tls in CATS:
+        items=[]; 
+        for tl in tls: items.extend(by_type.get(tl,[])); covered.add(tl)
+        if items: cat_data.append((cn,items))
+    others=[r for tl,rs in by_type.items() if tl not in covered for r in rs]
+    if others: cat_data.append(("Other",others))
+
+    for cn,places in cat_data:
+        sk=f"_rec_{cn}"
+        if sk not in st.session_state: st.session_state[sk]=0
+        hdr1,hdr2=st.columns([8,1])
+        with hdr1:
+            st.markdown(f'<div style="font-weight:600;font-size:0.88rem;color:#fff;margin:16px 0 8px">{cn} <span style="font-size:0.72rem;color:rgba(167,139,250,0.5)">({min(8,len(places))}/{len(places)})</span></div>', unsafe_allow_html=True)
+        with hdr2:
+            if st.button("↺",key=f"rf_{cn}",use_container_width=True):
+                st.session_state[sk]=(st.session_state[sk]+1)%9999
+
+        import random as _r
+        _r.seed(st.session_state[sk])
+        picks=sorted(_r.sample(places,min(8,len(places))),key=lambda r:r.get("rating",0),reverse=True)
+
+        rows_e=[picks[i:i+4] for i in range(0,len(picks),4)]
+        for row in rows_e:
+            cols=st.columns(len(row))
+            for ci,p in enumerate(row):
+                with cols[ci]:
+                    nm=_ss(p.get("name","")); tl=_ss(p.get("type_label","") or p.get("type",""))
+                    rat=p.get("rating",0); dist=_ss(p.get("district","") or "")
+                    addr=_ss(p.get("address","") or "")[:45]
+                    _,cs=cost_est(tl,avg,country)
+                    dur=estimate_duration(nm,tl)
+
+                    st.markdown(f"""
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);
+                    border-radius:14px;padding:14px;margin-bottom:6px">
+                      <div style="font-weight:600;font-size:0.83rem;color:#fff;margin-bottom:3px">{nm}</div>
+                      <div style="font-size:0.72rem;color:rgba(255,255,255,0.4)">{tl}{'&nbsp;·&nbsp;'+dist if dist else ''}</div>
+                      {"<div style='font-size:0.68rem;color:rgba(167,139,250,0.5);margin-top:2px'>"+addr+"</div>" if addr and "Sample" not in addr else ""}
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+                        <span style="font-size:0.72rem;color:#fff">{'⭐ '+str(rat) if rat else ''}</span>
+                        <span style="font-size:0.68rem;color:rgba(245,158,11,0.7)">⏱ {format_duration(dur)}</span>
+                      </div>
+                      <div style="font-size:0.70rem;color:rgba(167,139,250,0.6);margin-top:4px">💰 {cs}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    if day_keys:
+                        sel_day = st.selectbox("",["day…"]+day_keys,
+                                               key=f"ex_day_{cn}_{nm[:5]}_{ci}",
+                                               label_visibility="collapsed")
+                        ec1,ec2=st.columns(2)
+                        with ec1:
+                            if sel_day!="day…" and st.button("+",key=f"exadd_{cn}_{nm[:5]}_{ci}",use_container_width=True):
+                                stops_list=list(current_itin.get(sel_day,[]))
+                                if nm not in {s.get("name","") for s in stops_list}:
+                                    stops_list.append({"name":nm,"lat":p.get("lat",0),"lon":p.get("lon",0),
+                                                       "type_label":tl,"rating":rat,"address":addr,
+                                                       "district":dist,"description":_ss(p.get("description","")),
+                                                       "time_slot":"TBD","transport_to_next":None})
+                                    new_itin=dict(current_itin); new_itin[sel_day]=stops_list
+                                    st.session_state["_itin"]=new_itin
+                                    st.toast(f"Added {nm}!"); st.rerun()
+                                else: st.toast("Already added!",icon="ℹ️")
+                        with ec2:
+                            if user:
+                                saved=wl_check(user["username"],nm)
+                                if st.button("♥" if saved else "♡",key=f"exwl_{cn}_{nm[:5]}_{ci}",use_container_width=True):
+                                    if saved: wl_remove(user["username"],nm); st.toast(f"Removed {nm}")
+                                    else: wl_add(user["username"],{"name":nm,"lat":p.get("lat",0),"lon":p.get("lon",0),"type_label":tl,"rating":rat}); st.toast(f"Saved {nm}!")
+                                    st.rerun()
+
+# ══════════════════════════════════════════════════════════════════
+# MAIN ROUTER
+# ══════════════════════════════════════════════════════════════════
+st.markdown('<div class="wizard-wrap">', unsafe_allow_html=True)
+
+# Voyager wordmark
+st.markdown("""
+<div style="text-align:center;margin-bottom:32px">
+  <div style="font-family:'Cormorant Garamond',serif;font-size:1.6rem;font-weight:300;
+  color:rgba(255,255,255,0.9);letter-spacing:0.12em">
+    V O Y A G E R
+  </div>
+  <div style="font-size:0.62rem;color:rgba(167,139,250,0.5);letter-spacing:0.2em;
+  text-transform:uppercase;margin-top:3px">AI Travel Planner</div>
+</div>
+""", unsafe_allow_html=True)
+
+step = st.session_state.get("step", 1)
+
+if step == 1:
+    step_1()
+elif step == 2:
+    step_2()
+elif step == 3:
+    step_3()
+elif step == 4:
+    step_4()
 else:
-    # Welcome
-    st.markdown(
-        '<div class="wc-grid">'
-        '<div class="wc"><div class="wc-i">&#10022;</div>'
-        '<div class="wc-t">Personalised</div><div class="wc-d">Mix any place types</div></div>'
-        '<div class="wc"><div class="wc-i">&#128336;</div>'
-        '<div class="wc-t">Time-accurate</div><div class="wc-d">Each stop has duration</div></div>'
-        '<div class="wc"><div class="wc-i">&#9711;</div>'
-        '<div class="wc-t">AI Must-See</div><div class="wc-d">Daily famous highlights</div></div>'
-        '<div class="wc"><div class="wc-i">&#9825;</div>'
-        '<div class="wc-t">Wishlist</div><div class="wc-d">Save & re-add places</div></div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div style="text-align:center;color:#c4b5fd;font-size:.82rem;margin-top:24px">'
-        'Choose a destination in the sidebar &#8594; tap <b>Build Itinerary</b></div>',
-        unsafe_allow_html=True,
-    )
+    st.session_state["step"] = 1
+    st.rerun()
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# Footer
+st.markdown("""
+<div style="text-align:center;padding:24px;color:rgba(167,139,250,0.25);font-size:0.68rem;
+letter-spacing:0.08em;text-transform:uppercase">
+  Voyager · AI-Powered Luxury Travel Planning · All rights reserved
+</div>
+""", unsafe_allow_html=True)
