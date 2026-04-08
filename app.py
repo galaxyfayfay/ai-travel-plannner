@@ -1,7 +1,6 @@
 """
-Voyager AI Travel Planner v4
-White + Gold + Glass · Apple Design System
-All 7 issues addressed
+Voyager AI Travel Planner v5
+White + Gold + Glass · Apple iOS · All 13 issues fixed
 """
 
 import math, random, re, json, os, time
@@ -139,9 +138,21 @@ LANG_DATA = {
         "no_alt": "No alternatives found for this type.",
         "discovering": "Discovering places",
         "crafting": "Crafting your itinerary…",
-        "locating": "Locating…",
+        "locating": "Looking up location…",
         "budget_label": "Daily budget",
         "quick_q": "Quick questions:",
+        "guest_cta_title": "Loving your itinerary?",
+        "guest_cta_sub": "Create a free account to save this trip, wishlist places, and invite friends to plan together.",
+        "guest_cta_btn": "Create free account",
+        "search_ph": "Or search any city worldwide…",
+        "refresh_cities": "Refresh",
+        "city_label": "City",
+        "ru_ph": "Choose a username (3+ chars)",
+        "rp_ph": "Create a password (6+ chars)",
+        "plan_day_btn": "Open →",
+        "move_up": "↑", "move_down": "↓",
+        "overview_reorder": "Reorder days",
+        "total_est": "Est. total",
     },
     "ZH": {
         "brand": "旅行家",
@@ -282,6 +293,16 @@ section[data-testid="stSidebar"] { display: none !important; }
   --shadow-sm: 0 2px 8px rgba(0,0,0,0.06);
   --shadow-md: 0 4px 20px rgba(0,0,0,0.08);
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.10);
+}
+
+/* ── Enhanced Apple iOS glass ── */
+.glass-frost{
+  background:rgba(255,255,255,0.72);
+  backdrop-filter:blur(28px) saturate(200%);
+  -webkit-backdrop-filter:blur(28px) saturate(200%);
+  border:1px solid rgba(255,255,255,0.85);
+  border-radius:20px;
+  box-shadow:0 4px 24px rgba(0,0,0,0.07),0 1px 0 rgba(255,255,255,0.95) inset;
 }
 
 /* ── Glass card ── */
@@ -1312,6 +1333,15 @@ def render_progress(cur):
             html += f'<div class="prog-line {lc}"></div>'
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
+    # Clickable jump: allow going back to completed steps
+    if cur > 1:
+        jump_labels = steps[:cur-1]
+        jc = st.columns(len(jump_labels) + 3)
+        for ji,(jicon,jlabel) in enumerate(jump_labels):
+            jn = ji+1
+            with jc[ji+1]:
+                if st.button(f"↩ {jlabel}",key=f"pjump_{jn}_{cur}",use_container_width=True):
+                    st.session_state["step"]=jn; st.rerun()
 
 # ═══════════════════════════════════════════════════════════════
 # TOP BAR (lang switch + user)
@@ -1445,52 +1475,52 @@ def step_2():
         st.markdown(f'<div class="page-title">{T("where_title")}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="page-sub">{T("where_sub")}</div>', unsafe_allow_html=True)
 
-        c1,c2 = st.columns([3,2], gap="small")
-        with c1:
-            city_ov = st.text_input(T("where_title"), placeholder=T("search_city_ph"),
-                                     value="", key="s2_ov", label_visibility="collapsed")
-        with c2:
+        # ── Row 1: Country → City (two aligned dropdowns, country first) ──
+        ga2,gb2 = st.columns(2, gap="medium")
+        with ga2:
             all_countries = [""] + sorted(WORLD_CITIES.keys())
-            prev_cc = st.session_state.get("dest_country","")
+            prev_cc2 = st.session_state.get("s2_cc_sel","")
             sel_cc = st.selectbox(T("country_label"), all_countries,
-                                   index=all_countries.index(prev_cc) if prev_cc in all_countries else 0,
-                                   key="s2_cc")
+                                   index=all_countries.index(prev_cc2) if prev_cc2 in all_countries else 0,
+                                   key="s2_cc_dd")
+            if sel_cc != st.session_state.get("s2_cc_sel",""):
+                st.session_state["s2_cc_sel"]=sel_cc
+                st.session_state["s2_city_dd_val"]=""
+                st.rerun()
+        with gb2:
+            if sel_cc:
+                city_list = [""] + WORLD_CITIES.get(sel_cc, [])
+                prev_city2 = st.session_state.get("s2_city_dd_val","")
+                sel_city_dd = st.selectbox(T("city_label"), city_list,
+                                            index=city_list.index(prev_city2) if prev_city2 in city_list else 0,
+                                            key="s2_city_dd2")
+                if sel_city_dd != st.session_state.get("s2_city_dd_val",""):
+                    st.session_state["s2_city_dd_val"]=sel_city_dd
+                    if sel_city_dd: st.session_state["dest_city"]=sel_city_dd; st.session_state["dest_country"]=sel_cc
+                    st.rerun()
+            else:
+                st.selectbox(T("city_label"),["— select a country first —"],key="s2_city_disabled",disabled=True)
+        city_ov = st.text_input("", placeholder=T("search_ph") if hasattr(T("search_ph"), "__str__") else "Or search any city…",
+                                 key="s2_ov", label_visibility="collapsed")
 
-        # City grid
+        # ── Popular cities: 1 row of 4 + refresh ──
         st.markdown(f'<span class="section-label">{T("popular")}</span>', unsafe_allow_html=True)
-
-        if sel_cc and not city_ov:
-            cities = WORLD_CITIES.get(sel_cc, [])
-            cur_city = st.session_state.get("dest_city","")
-            rows = [cities[i:i+4] for i in range(0,len(cities),4)]
-            for row in rows:
-                cols = st.columns(len(row))
-                for ci,city in enumerate(row):
-                    with cols[ci]:
-                        sel = (city == cur_city)
-                        if st.button(("✓ " if sel else "")+city, key=f"cp_{city}",
-                                     use_container_width=True, type="primary" if sel else "secondary"):
-                            st.session_state["dest_city"] = city
-                            st.session_state["dest_country"] = sel_cc; st.rerun()
-        else:
-            page = st.session_state.get("popular_page",0)
-            page_size = 12
-            chunk = POPULAR[page*page_size:(page+1)*page_size]
-            if not chunk: chunk = POPULAR[:page_size]
-            rows = [chunk[i:i+4] for i in range(0,len(chunk),4)]
-            for row in rows:
-                cols = st.columns(len(row))
-                for ci,(icon,city,country) in enumerate(row):
-                    with cols[ci]:
-                        sel = (city == st.session_state.get("dest_city",""))
-                        if st.button(f"{icon} {city}", key=f"pop_{city}_{page}",
-                                     use_container_width=True, type="primary" if sel else "secondary"):
-                            st.session_state["dest_city"] = city
-                            st.session_state["dest_country"] = country; st.rerun()
-            rc,_ = st.columns([1,3])
-            with rc:
-                if st.button(T("more_cities"), key="pop_more", use_container_width=True):
-                    st.session_state["popular_page"] = (page+1) % (len(POPULAR)//page_size+1); st.rerun()
+        pseed = st.session_state.get("popular_seed", 0)
+        import random as _r2; _r2.seed(pseed)
+        pop_src = POPULAR_ALL if "POPULAR_ALL" in dir() else POPULAR
+        shown4 = _r2.sample(pop_src, min(4, len(pop_src)))
+        cur_city_p = st.session_state.get("dest_city","")
+        pc1,pc2,pc3,pc4,pc5 = st.columns([1,1,1,1,1])
+        pcols = [pc1,pc2,pc3,pc4]
+        for ci,(icon,city_p,country_p,*_) in enumerate(shown4):
+            with pcols[ci]:
+                sel_p = (city_p==cur_city_p)
+                if st.button(f"{icon} {city_p}",key=f"pop4_{city_p}_{pseed}",use_container_width=True,type="primary" if sel_p else "secondary"):
+                    st.session_state["dest_city"]=city_p; st.session_state["dest_country"]=country_p
+                    st.session_state["s2_cc_sel"]=country_p; st.session_state["s2_city_dd_val"]=city_p; st.rerun()
+        with pc5:
+            if st.button("↺",key="pop_ref2",use_container_width=True,help=T("refresh_cities")):
+                st.session_state["popular_seed"]=(pseed+7)%100; st.rerun()
 
         # Selected indicator
         final_city = city_ov.strip() or st.session_state.get("dest_city","")
@@ -1626,9 +1656,9 @@ def step_3():
                                    int(cfg.get("budget",base_budget)), 5, format="$%d", key=f"d_bud_{di}")
                 st.markdown(f'<span class="section-label" style="margin-top:10px;display:block">{T("stops_per_type")}</span>', unsafe_allow_html=True)
                 quotas = {}
-                q_cols = st.columns(min(len(sel_types),4))
+                _qa, _qb = st.columns(2, gap="medium")
                 for tci,tl in enumerate(sel_types):
-                    with q_cols[tci%len(q_cols)]:
+                    with (_qa if tci%2==0 else _qb):
                         prev_q = cfg.get("quotas",{}).get(tl,1)
                         n = st.number_input(tl, 0, 5, int(prev_q), 1, key=f"q_{di}_{tl}")
                         if n > 0: quotas[tl] = n
@@ -1686,7 +1716,7 @@ def _generate_itinerary():
     total_q = sum(sum(q.values()) for q in day_quotas)
     lpt = max(20, total_q*5)
 
-    with st.spinner(f"{T('discovering')} in {city}…"):
+    with st.spinner(f"{T('discovering')} {city}…"):
         try:
             df,warn = fetch_places(lat,lon,cc,is_cn,tuple(sel_types),lpt,st.session_state.get("seed",42))
         except Exception as e: st.error(f"Search error: {e}"); return
@@ -1859,7 +1889,7 @@ def step_4():
                 preview = " · ".join(_ss(s.get("name",""))[:20] for s in stops[:3])
                 if len(stops)>3: preview += f" +{len(stops)-3}"
 
-                dc1,dc2 = st.columns([4,1], gap="small")
+                dc1,dc2,dc3 = st.columns([4,1,1], gap="small")
                 with dc1:
                     st.markdown(f"""
                     <div style="background:white;border:1px solid rgba(0,0,0,0.07);
@@ -1877,10 +1907,39 @@ def step_4():
                       <div style="font-size:12px;color:#9a8c78;line-height:1.5">{preview}</div>
                     </div>""", unsafe_allow_html=True)
                 with dc2:
+                    all_ov = list(itin.keys()); n_ov = len(all_ov)
+                    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+                    if di>0 and st.button("↑",key=f"day_up_{di}",use_container_width=True):
+                        all_ov[di],all_ov[di-1]=all_ov[di-1],all_ov[di]
+                        st.session_state["_itin"]={k:itin[k] for k in all_ov}; st.rerun()
+                    if di<n_ov-1 and st.button("↓",key=f"day_dn_{di}",use_container_width=True):
+                        all_ov[di],all_ov[di+1]=all_ov[di+1],all_ov[di]
+                        st.session_state["_itin"]={k:itin[k] for k in all_ov}; st.rerun()
+                with dc3:
                     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-                    if st.button(T("plan_day"), key=f"open_{dk}", use_container_width=True, type="primary"):
-                        st.session_state["active_day"] = dk
-                        st.session_state["step"] = 5; st.rerun()
+                    if st.button(T("plan_day_btn"),key=f"open_{dk}",use_container_width=True,type="primary"):
+                        st.session_state["active_day"]=dk; st.session_state["step"]=5; st.rerun()
+
+        # Guest CTA - show registration prompt
+        if not user:
+            st.markdown(f"""<div style="background:linear-gradient(135deg,rgba(184,148,58,.07),rgba(184,148,58,.03));
+              border:1px solid rgba(184,148,58,.22);border-radius:18px;padding:18px 20px;margin:14px 0">
+              <div style="font-weight:600;font-size:15px;color:#1a1610;margin-bottom:6px">✦ {T("guest_cta_title")}</div>
+              <div style="font-size:13px;color:#5a5040;margin-bottom:14px">{T("guest_cta_sub")}</div>
+            </div>""",unsafe_allow_html=True)
+            if AUTH_OK:
+                with st.expander(T("guest_cta_btn"),expanded=False):
+                    with st.form("guest_reg_form"):
+                        st.text_input("",placeholder=T("ru_ph"),key="gr_u",label_visibility="collapsed")
+                        st.text_input("",placeholder=T("e_ph"),key="gr_e",label_visibility="collapsed")
+                        st.text_input("",placeholder=T("rp_ph"),type="password",key="gr_p",label_visibility="collapsed")
+                        if st.form_submit_button(T("register"),use_container_width=True):
+                            ok,msg=register_user(st.session_state.get("gr_u","").strip(),
+                                                  st.session_state.get("gr_p",""),st.session_state.get("gr_e","").strip())
+                            (st.success if ok else st.error)(msg)
+                            if ok:
+                                ok2,msg2,tok=login_user(st.session_state.get("gr_u","").strip(),st.session_state.get("gr_p",""))
+                                if ok2: st.session_state["_auth_token"]=tok; st.session_state["user_mode"]="logged_in"; st.rerun()
 
         # Wishlist
         if user:
@@ -2144,44 +2203,9 @@ def step_5():
             else:
                 st.info("Install streamlit-folium for the interactive map.")
 
-            # AI Must-See picks
-            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-            with st.expander(f"✦ {T('ai_picks')}", expanded=False):
-                sel_types = st.session_state.get("trip_types",["🏛️ Attraction"])
-                picks = get_ai_mustsee(city, cc, st.session_state.get("trip_days",3), tuple(sel_types))
-                if picks:
-                    in_day = {s.get("name","") for s in stops}
-                    for pi,rec in enumerate(picks[:5]):
-                        nm = _ss(rec.get("name",""))
-                        already = nm in in_day
-                        rc1,rc2 = st.columns([4,1], gap="small")
-                        with rc1:
-                            st.markdown(f"""
-                            <div style="background:rgba(184,148,58,0.04);border:1px solid rgba(184,148,58,0.15);
-                            border-radius:10px;padding:10px 12px;margin:3px 0">
-                              <div style="font-weight:600;font-size:13px;color:#1a1610">{nm}</div>
-                              <div style="font-size:11px;color:#b8943a;margin-top:2px">{_ss(rec.get("why",""))}</div>
-                              <div style="font-size:11px;color:#9a8c78">⭐ {rec.get("rating",4.5)} · {fmt_dur(rec.get("duration_min",60))}</div>
-                            </div>""", unsafe_allow_html=True)
-                        with rc2:
-                            st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-                            if already:
-                                st.markdown(f'<div style="font-size:10px;color:#5a8a5a;text-align:center">{T("in_schedule")}</div>', unsafe_allow_html=True)
-                            else:
-                                if st.button(T("add"), key=f"ai5_{dk}_{pi}", use_container_width=True, type="primary"):
-                                    new_stop = {"name":nm,
-                                                "lat":rec.get("lat",lat+random.uniform(-.01,.01)),
-                                                "lon":rec.get("lon",lon+random.uniform(-.01,.01)),
-                                                "type_label":_ss(rec.get("type","🏛️ Attraction")),
-                                                "rating":rec.get("rating",4.5),"address":"",
-                                                "district":"AI Pick","description":_ss(rec.get("why","")),
-                                                "time_slot":"TBD","transport_to_next":None}
-                                    stops.append(new_stop)
-                                    itin[dk]=stops; st.session_state["_itin"]=itin
-                                    st.toast(f"Added {nm}!"); st.rerun()
-                else:
-                    st.caption("No AI picks for this city.")
-
+            # AI assistant panel (replaces AI Must-See)
+            st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+            _render_ai(city, itin, compact=True)
         # ── Save & return / navigate ──
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
         st.markdown('<hr style="border:none;border-top:1px solid rgba(0,0,0,0.07);margin:4px 0">', unsafe_allow_html=True)
